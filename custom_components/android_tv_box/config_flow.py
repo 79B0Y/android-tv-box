@@ -46,17 +46,6 @@ STEP_USER_DATA_SCHEMA = vol.Schema({
     vol.Optional(CONF_DEVICE_NAME, default=DEFAULT_DEVICE_NAME): cv.string,
 })
 
-# Schema for advanced options
-ADVANCED_OPTIONS_SCHEMA = vol.Schema({
-    vol.Optional("screenshot_path", default="/sdcard/isgbackup/screenshot/"): str,
-    vol.Optional("screenshot_keep_count", default=3): int,
-    vol.Optional("update_interval", default=60): int,
-    vol.Optional("isg_monitoring", default=True): bool,
-    vol.Optional("isg_auto_restart", default=True): bool,
-    vol.Optional("isg_memory_threshold", default=80): int,
-    vol.Optional("isg_cpu_threshold", default=90): int,
-})
-
 # Keep the existing schema with proper validation for backward compatibility
 STEP_OPTIONS_DATA_SCHEMA = vol.Schema({
     vol.Optional(CONF_SCREENSHOT_PATH, default=DEFAULT_SCREENSHOT_PATH): cv.string,
