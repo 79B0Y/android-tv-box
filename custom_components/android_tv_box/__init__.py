@@ -67,27 +67,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a config entry."""
-    # Unload platforms
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    
     if unload_ok:
-        # Clean up coordinator and ADB manager
         data = hass.data[DOMAIN].pop(entry.entry_id)
         coordinator = data["coordinator"]
         adb_manager = data["adb_manager"]
-        
-        # Disconnect ADB
+
+        # 断开 ADB 连接即可
         try:
             await adb_manager.disconnect()
         except Exception as e:
             _LOGGER.debug("Error disconnecting ADB: %s", e)
-        
-        # Stop coordinator
-        coordinator.async_stop()
-    
-    return unload_ok
 
+        # 不需要显式停止 DataUpdateCoordinator
+        # 它会在没有监听者/定时器时自行结束周期任务
+    return unload_ok
 
 async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Update options for the entry."""
