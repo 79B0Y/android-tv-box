@@ -46,17 +46,6 @@ STEP_USER_DATA_SCHEMA = vol.Schema({
     vol.Optional(CONF_DEVICE_NAME, default=DEFAULT_DEVICE_NAME): cv.string,
 })
 
-# Schema for advanced options
-ADVANCED_OPTIONS_SCHEMA = vol.Schema({
-    vol.Optional("screenshot_path", default="/sdcard/isgbackup/screenshot/"): str,
-    vol.Optional("screenshot_keep_count", default=3): int,
-    vol.Optional("update_interval", default=60): int,
-    vol.Optional("isg_monitoring", default=True): bool,
-    vol.Optional("isg_auto_restart", default=True): bool,
-    vol.Optional("isg_memory_threshold", default=80): int,
-    vol.Optional("isg_cpu_threshold", default=90): int,
-})
-
 # Keep the existing schema with proper validation for backward compatibility
 STEP_OPTIONS_DATA_SCHEMA = vol.Schema({
     vol.Optional(CONF_SCREENSHOT_PATH, default=DEFAULT_SCREENSHOT_PATH): cv.string,
@@ -67,6 +56,16 @@ STEP_OPTIONS_DATA_SCHEMA = vol.Schema({
     vol.Optional(CONF_ISG_MEMORY_THRESHOLD, default=DEFAULT_ISG_MEMORY_THRESHOLD): vol.All(vol.Coerce(int), vol.Range(min=50, max=95)),
     vol.Optional(CONF_ISG_CPU_THRESHOLD, default=DEFAULT_ISG_CPU_THRESHOLD): vol.All(vol.Coerce(int), vol.Range(min=50, max=99)),
 })
+
+OPTION_FIELD_KEYS = {
+    CONF_SCREENSHOT_PATH,
+    CONF_SCREENSHOT_KEEP_COUNT,
+    CONF_UPDATE_INTERVAL,
+    CONF_ISG_MONITORING,
+    CONF_ISG_AUTO_RESTART,
+    CONF_ISG_MEMORY_THRESHOLD,
+    CONF_ISG_CPU_THRESHOLD,
+}
 
 
 async def validate_input(hass: HomeAssistant, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -179,9 +178,30 @@ class AndroidTVBoxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     "android_version": self._device_info.get("android_version", "Unknown"),
                 },
             )
-        
+
+        # Validate known option fields while preserving any extra keys Home Assistant may supply
+        base_options = {k: user_input[k] for k in OPTION_FIELD_KEYS if k in user_input}
+        extra_options = {k: v for k, v in user_input.items() if k not in OPTION_FIELD_KEYS}
+
+        try:
+            validated_options = STEP_OPTIONS_DATA_SCHEMA(base_options)
+        except vol.Invalid as err:
+            _LOGGER.debug("Options validation failed: %s", err)
+            return self.async_show_form(
+                step_id="options",
+                data_schema=STEP_OPTIONS_DATA_SCHEMA,
+                errors={"base": ERROR_UNKNOWN},
+                description_placeholders={
+                    "device_name": self._device_name,
+                    "device_model": self._device_info.get("model", "Unknown"),
+                    "android_version": self._device_info.get("android_version", "Unknown"),
+                },
+            )
+
+        merged_options = {**validated_options, **extra_options}
+
         # Continue to app configuration
-        return await self.async_step_apps(user_input)
+        return await self.async_step_apps(merged_options)
     
     async def async_step_apps(
         self, options_input: Dict[str, Any],
@@ -267,8 +287,8 @@ class AndroidTVBoxOptionsFlowHandler(config_entries.OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
         
-        # Get current configuration
-        current_config = self.config_entry.data
+        # Merge immutable entry data with the latest options so defaults reflect current settings
+        current_config = {**self.config_entry.data, **self.config_entry.options}
         
         # Create schema with current values
         options_schema = vol.Schema({
