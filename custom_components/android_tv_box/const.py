@@ -65,6 +65,7 @@ KEYCODE_VOLUME_MUTE = 164
 # Power keycodes
 KEYCODE_POWER = 26
 KEYCODE_WAKEUP = 224
+KEYCODE_SLEEP = 223
 
 # Navigation keycodes
 KEYCODE_DPAD_UP = 19
@@ -93,7 +94,7 @@ ADB_COMMANDS = {
 
     # Power control
     "power_on": "input keyevent {keycode}".format(keycode=KEYCODE_WAKEUP),
-    "power_off": "input keyevent {keycode}".format(keycode=KEYCODE_POWER),
+    "power_off": "input keyevent {keycode}".format(keycode=KEYCODE_SLEEP),
 
     # Navigation
     "nav_up": "input keyevent {keycode}".format(keycode=KEYCODE_DPAD_UP),
@@ -144,7 +145,7 @@ ISG_CONTROL_COMMANDS = {
 SET_COMMANDS = {
     "set_volume": "service call audio 12 i32 3 i32 {level} i32 0",
     "set_brightness": "settings put system screen_brightness {level}",
-    "start_app": "am start {package}",
+    "start_app": "monkey -p {package} -c android.intent.category.LAUNCHER 1",
     "cast_media": "am start -a android.intent.action.VIEW -d '{url}' --es android.intent.extra.REFERRER_NAME 'Home Assistant'",
     "cast_youtube": "am start -a android.intent.action.VIEW -d 'https://www.youtube.com/watch?v={video_id}' -n com.google.android.youtube/.WatchWhileActivity",
     "cast_netflix": "am start -a android.intent.action.VIEW -d 'https://www.netflix.com/watch/{video_id}' -n com.netflix.mediaclient/.ui.launch.UIWebViewActivity",

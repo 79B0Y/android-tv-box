@@ -33,21 +33,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     host = entry.data[CONF_HOST]
     port = entry.data[CONF_PORT]
     
-    # Prepare ADB authentication key (generate if missing)
+    # Prepare ADB authentication key (generate if missing) in executor to avoid blocking I/O
     key_dir = hass.config.path(".storage")
     os.makedirs(key_dir, exist_ok=True)
     key_path = os.path.join(key_dir, f"android_tv_box_{entry.entry_id}.adb_key")
 
-    rsa_signers = None
-    try:
-        from adb_shell.auth.keygen import keygen
-        from adb_shell.auth.sign_pythonrsa import PythonRSASigner
+    async def _load_rsa_signers(path: str):
+        try:
+            from adb_shell.auth.keygen import keygen
+            from adb_shell.auth.sign_pythonrsa import PythonRSASigner
+            # File I/O: run in thread
+            def _gen_and_load():
+                if not os.path.exists(path):
+                    keygen(path)
+                return [PythonRSASigner.FromRSAKeyPath(path)]
 
-        if not os.path.exists(key_path):
-            keygen(key_path)
-        rsa_signers = [PythonRSASigner.FromRSAKeyPath(key_path)]
-    except Exception as e:  # If dependency not available yet during setup, continue without keys
-        _LOGGER.debug("ADB key setup skipped: %s", e)
+            return await hass.async_add_executor_job(_gen_and_load)
+        except Exception as e:  # dependency missing or other error
+            _LOGGER.debug("ADB key setup skipped: %s", e)
+            return None
+
+    rsa_signers = await _load_rsa_signers(key_path)
 
     # Create ADB manager with keys (if available)
     adb_manager = ADBManager(host, port)
@@ -73,8 +79,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.error("Failed to connect to Android TV Box at %s:%s: %s", host, port, e)
         # Don't fail setup - let coordinator handle reconnection
     
-    # Fetch initial data
-    await coordinator.async_config_entry_first_refresh()
+    # Fetch initial data, but don't abort setup if device is offline
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except Exception as e:
+        _LOGGER.warning(
+            "Initial data refresh failed: %s. Entities will start unavailable and retry in background.",
+            e,
+        )
     
     # Store coordinator in hass data
     hass.data[DOMAIN][entry.entry_id] = {
