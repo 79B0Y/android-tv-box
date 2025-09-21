@@ -37,7 +37,9 @@ from .const import (
     ERROR_UNKNOWN,
 )
 
+import logging
 _LOGGER = logging.getLogger(__name__)
+_LOGGER.warning("Android TV Box config_flow loaded: TEST-2025-09-21")
 
 # ---------- Schemas ----------
 # Step 1 (Basic)
