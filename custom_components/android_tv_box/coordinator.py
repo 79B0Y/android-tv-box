@@ -199,18 +199,22 @@ class AndroidTVUpdateCoordinator(DataUpdateCoordinator):
         self._smart_monitoring = config.get("smart_monitoring", True)
         self._skip_when_offline = config.get("skip_when_offline", True)
         
-        # Initialize data first
-        self.data = AndroidTVState()
-        
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
             update_interval=BASE_UPDATE_INTERVAL,
         )
+        
+        # Initialize data after parent init
+        if not hasattr(self, 'data') or self.data is None:
+            self.data = AndroidTVState()
     
     async def _async_update_data(self) -> AndroidTVState:
         """Fetch data from device."""
+        # Ensure data object exists
+        self._ensure_data()
+            
         try:
             current_time = datetime.now()
             
@@ -248,10 +252,22 @@ class AndroidTVUpdateCoordinator(DataUpdateCoordinator):
             
         except Exception as err:
             # Ensure self.data exists before trying to set attributes
-            if hasattr(self, 'data') and self.data is not None:
-                self.data.is_connected = False
-                self.data.connection_error = str(err)
+            self._ensure_data()
+            
+            self.data.is_connected = False
+            self.data.connection_error = str(err)
+            
+            # Log the error for debugging
+            _LOGGER.error("Error in coordinator update: %s", err)
+            import traceback
+            _LOGGER.debug("Coordinator error traceback: %s", traceback.format_exc())
+            
             raise UpdateFailed(f"Error communicating with device: {err}")
+    
+    def _ensure_data(self) -> None:
+        """Ensure data object exists."""
+        if not hasattr(self, 'data') or self.data is None:
+            self.data = AndroidTVState()
     
     async def _ensure_connection(self) -> bool:
         """Ensure ADB connection is established."""
@@ -409,6 +425,9 @@ class AndroidTVUpdateCoordinator(DataUpdateCoordinator):
     async def set_volume_with_feedback(self, volume_level: float) -> bool:
         """Set volume with immediate state feedback."""
         try:
+            # Ensure data exists
+            self._ensure_data()
+                
             # Convert percentage to device level
             target_level = int(volume_level * self.data.volume_max)
             success = await self.adb_manager.set_volume(target_level)
@@ -433,6 +452,9 @@ class AndroidTVUpdateCoordinator(DataUpdateCoordinator):
     async def set_brightness_with_feedback(self, brightness: int) -> bool:
         """Set brightness with immediate state feedback."""
         try:
+            # Ensure data exists
+            self._ensure_data()
+                
             success = await self.adb_manager.set_brightness(brightness)
             
             if success:
