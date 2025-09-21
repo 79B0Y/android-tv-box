@@ -182,7 +182,6 @@ class AndroidTVUpdateCoordinator(DataUpdateCoordinator):
         """Initialize coordinator."""
         self.adb_manager = adb_manager
         self.config = config
-        self.data = AndroidTVState()
         
         # Update intervals and timing
         self._last_basic_update = datetime.min
@@ -200,6 +199,9 @@ class AndroidTVUpdateCoordinator(DataUpdateCoordinator):
         self._smart_monitoring = config.get("smart_monitoring", True)
         self._skip_when_offline = config.get("skip_when_offline", True)
         
+        # Initialize data first
+        self.data = AndroidTVState()
+        
         super().__init__(
             hass,
             _LOGGER,
@@ -214,9 +216,8 @@ class AndroidTVUpdateCoordinator(DataUpdateCoordinator):
             
             # Check connection first
             if not await self._ensure_connection():
-                if self.data.is_connected:
-                    self.data.is_connected = False
-                    self.data.connection_error = "Connection lost"
+                self.data.is_connected = False
+                self.data.connection_error = "Connection lost"
                 raise UpdateFailed("Cannot connect to device")
             
             # Update connection state
@@ -246,8 +247,10 @@ class AndroidTVUpdateCoordinator(DataUpdateCoordinator):
             return self.data
             
         except Exception as err:
-            self.data.is_connected = False
-            self.data.connection_error = str(err)
+            # Ensure self.data exists before trying to set attributes
+            if hasattr(self, 'data') and self.data is not None:
+                self.data.is_connected = False
+                self.data.connection_error = str(err)
             raise UpdateFailed(f"Error communicating with device: {err}")
     
     async def _ensure_connection(self) -> bool:

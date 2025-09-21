@@ -136,7 +136,7 @@ class ADBManager(ADBManagerInterface):
         """Connect to Android TV device via ADB."""
         try:
             # Connect using adb-shell
-            self._device = AdbDeviceTcp(self.host, self.port, default_timeout_s=ADB_TIMEOUT)
+            self._device = AdbDeviceTcp(self.host, self.port)
             await asyncio.wait_for(self._device.connect(rsa_keys=None, auth_timeout_s=ADB_TIMEOUT), timeout=ADB_TIMEOUT)
             
             # Test connection with simple command
@@ -244,15 +244,25 @@ class ADBManager(ADBManagerInterface):
     async def _execute_with_device(self, command: str) -> ADBCommandResult:
         """Execute command using adb-shell."""
         try:
-            stdout, stderr = await asyncio.wait_for(
+            result = await asyncio.wait_for(
                 self._device.shell(command),
                 timeout=ADB_TIMEOUT
             )
-            return ADBCommandResult(
-                success=True,
-                stdout=stdout.strip() if stdout else "",
-                stderr=stderr.strip() if stderr else ""
-            )
+            # adb-shell returns a string, not a tuple
+            if isinstance(result, str):
+                return ADBCommandResult(
+                    success=True,
+                    stdout=result.strip() if result else "",
+                    stderr=""
+                )
+            else:
+                # Handle case where it might return a tuple
+                stdout, stderr = result
+                return ADBCommandResult(
+                    success=True,
+                    stdout=stdout.strip() if stdout else "",
+                    stderr=stderr.strip() if stderr else ""
+                )
         except Exception as e:
             return ADBCommandResult(
                 success=False,
