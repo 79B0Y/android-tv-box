@@ -122,6 +122,7 @@ class AndroidTVBoxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._device_name: Optional[str] = None
         self._device_info: Optional[Dict[str, Any]] = None
         self._errors: Dict[str, str] = {}
+        self._options_input: Optional[Dict[str, Any]] = None
     
     async def async_step_user(
         self, user_input: Optional[Dict[str, Any]] = None
@@ -180,12 +181,12 @@ class AndroidTVBoxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 },
             )
         
-        # Continue to app configuration
-        return await self.async_step_apps(user_input)
+        # Cache options for use in the apps step, then show apps form
+        self._options_input = user_input
+        return await self.async_step_apps()
     
     async def async_step_apps(
-        self, options_input: Dict[str, Any],
-        user_input: Optional[Dict[str, Any]] = None
+        self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
         """Handle app configuration step."""
         if user_input is None:
@@ -229,14 +230,15 @@ class AndroidTVBoxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         }
         
         # Create options data (changeable configuration)
+        _opt = self._options_input or {}
         options_data = {
-            CONF_SCREENSHOT_PATH: options_input[CONF_SCREENSHOT_PATH],
-            CONF_SCREENSHOT_KEEP_COUNT: options_input[CONF_SCREENSHOT_KEEP_COUNT],
-            CONF_UPDATE_INTERVAL: options_input[CONF_UPDATE_INTERVAL],
-            CONF_ISG_MONITORING: options_input[CONF_ISG_MONITORING],
-            CONF_ISG_AUTO_RESTART: options_input[CONF_ISG_AUTO_RESTART],
-            CONF_ISG_MEMORY_THRESHOLD: options_input[CONF_ISG_MEMORY_THRESHOLD],
-            CONF_ISG_CPU_THRESHOLD: options_input[CONF_ISG_CPU_THRESHOLD],
+            CONF_SCREENSHOT_PATH: _opt.get(CONF_SCREENSHOT_PATH, DEFAULT_SCREENSHOT_PATH),
+            CONF_SCREENSHOT_KEEP_COUNT: _opt.get(CONF_SCREENSHOT_KEEP_COUNT, DEFAULT_SCREENSHOT_KEEP_COUNT),
+            CONF_UPDATE_INTERVAL: _opt.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),
+            CONF_ISG_MONITORING: _opt.get(CONF_ISG_MONITORING, True),
+            CONF_ISG_AUTO_RESTART: _opt.get(CONF_ISG_AUTO_RESTART, True),
+            CONF_ISG_MEMORY_THRESHOLD: _opt.get(CONF_ISG_MEMORY_THRESHOLD, DEFAULT_ISG_MEMORY_THRESHOLD),
+            CONF_ISG_CPU_THRESHOLD: _opt.get(CONF_ISG_CPU_THRESHOLD, DEFAULT_ISG_CPU_THRESHOLD),
             CONF_APPS: apps_config,
             CONF_VISIBLE_APPS: visible_apps,
         }
