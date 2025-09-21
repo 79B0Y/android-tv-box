@@ -46,17 +46,6 @@ STEP_USER_DATA_SCHEMA = vol.Schema({
     vol.Optional(CONF_DEVICE_NAME, default=DEFAULT_DEVICE_NAME): cv.string,
 })
 
-# Schema for advanced options
-ADVANCED_OPTIONS_SCHEMA = vol.Schema({
-    vol.Optional("screenshot_path", default="/sdcard/isgbackup/screenshot/"): str,
-    vol.Optional("screenshot_keep_count", default=3): int,
-    vol.Optional("update_interval", default=60): int,
-    vol.Optional("isg_monitoring", default=True): bool,
-    vol.Optional("isg_auto_restart", default=True): bool,
-    vol.Optional("isg_memory_threshold", default=80): int,
-    vol.Optional("isg_cpu_threshold", default=90): int,
-})
-
 # Keep the existing schema with proper validation for backward compatibility
 STEP_OPTIONS_DATA_SCHEMA = vol.Schema({
     vol.Optional(CONF_SCREENSHOT_PATH, default=DEFAULT_SCREENSHOT_PATH): cv.string,
@@ -66,7 +55,7 @@ STEP_OPTIONS_DATA_SCHEMA = vol.Schema({
     vol.Optional(CONF_ISG_AUTO_RESTART, default=True): cv.boolean,
     vol.Optional(CONF_ISG_MEMORY_THRESHOLD, default=DEFAULT_ISG_MEMORY_THRESHOLD): vol.All(vol.Coerce(int), vol.Range(min=50, max=95)),
     vol.Optional(CONF_ISG_CPU_THRESHOLD, default=DEFAULT_ISG_CPU_THRESHOLD): vol.All(vol.Coerce(int), vol.Range(min=50, max=99)),
-})
+}, extra=vol.ALLOW_EXTRA)
 
 
 async def validate_input(hass: HomeAssistant, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -267,8 +256,8 @@ class AndroidTVBoxOptionsFlowHandler(config_entries.OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
         
-        # Get current configuration
-        current_config = self.config_entry.data
+        # Merge immutable entry data with the latest options so defaults reflect current settings
+        current_config = {**self.config_entry.data, **self.config_entry.options}
         
         # Create schema with current values
         options_schema = vol.Schema({
