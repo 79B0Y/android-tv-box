@@ -1,0 +1,27 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create zip
+        run: |
+          cd custom_components/android_tv_box
+          zip -r ../../android_tv_box.zip . -x "*.git*" "*/__pycache__/*" "*.pyc"
+
+      - name: Upload zip to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: android_tv_box.zip
+          asset_name: android_tv_box.zip
+          tag: ${{ github.ref }}
+          overwrite: true

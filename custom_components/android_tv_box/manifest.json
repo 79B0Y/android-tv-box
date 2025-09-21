@@ -11,5 +11,7 @@
   ],
   "version": "1.0.0",
   "iot_class": "local_polling",
-  "integration_type": "device"
+  "integration_type": "device",
+  "after_dependencies": [],
+  "dependencies": []
 }
