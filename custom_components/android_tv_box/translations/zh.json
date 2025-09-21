@@ -1,0 +1,65 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Android TV盒子设置",
+        "description": "配置您的Android TV盒子连接",
+        "data": {
+          "host": "IP地址",
+          "port": "ADB端口",
+          "device_name": "设备名称"
+        }
+      },
+      "options": {
+        "title": "高级选项",
+        "description": "为{device_name}配置高级设置\n设备: {device_model}\nAndroid: {android_version}",
+        "data": {
+          "screenshot_path": "截图路径",
+          "screenshot_keep_count": "保留截图数量",
+          "update_interval": "更新间隔（秒）",
+          "isg_monitoring": "启用ISG监控",
+          "isg_auto_restart": "自动重启ISG",
+          "isg_memory_threshold": "ISG内存阈值（%）",
+          "isg_cpu_threshold": "ISG CPU阈值（%）"
+        }
+      },
+      "apps": {
+        "title": "应用配置",
+        "description": "为{device_name}配置应用程序",
+        "data": {
+          "app_youtube": "YouTube包名",
+          "app_netflix": "Netflix包名",
+          "app_spotify": "Spotify包名",
+          "app_isg": "ISG包名",
+          "visible_apps": "可见应用"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "连接设备失败。请检查IP地址并确保启用了ADB调试。",
+      "timeout": "连接超时。请检查网络连接。",
+      "unknown": "发生意外错误。"
+    },
+    "abort": {
+      "already_configured": "设备已经配置"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Android TV盒子选项",
+        "description": "更新配置选项",
+        "data": {
+          "screenshot_path": "截图路径",
+          "screenshot_keep_count": "保留截图数量",
+          "update_interval": "更新间隔（秒）",
+          "isg_monitoring": "启用ISG监控",
+          "isg_auto_restart": "自动重启ISG",
+          "isg_memory_threshold": "ISG内存阈值（%）",
+          "isg_cpu_threshold": "ISG CPU阈值（%）",
+          "visible_apps": "可见应用"
+        }
+      }
+    }
+  }
+}

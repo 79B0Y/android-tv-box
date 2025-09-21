@@ -1,0 +1,65 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Android TV Box Setup",
+        "description": "Configure your Android TV Box connection",
+        "data": {
+          "host": "IP Address",
+          "port": "ADB Port",
+          "device_name": "Device Name"
+        }
+      },
+      "options": {
+        "title": "Advanced Options",
+        "description": "Configure advanced settings for {device_name}\nDevice: {device_model}\nAndroid: {android_version}",
+        "data": {
+          "screenshot_path": "Screenshot Path",
+          "screenshot_keep_count": "Screenshots to Keep",
+          "update_interval": "Update Interval (seconds)",
+          "isg_monitoring": "Enable ISG Monitoring",
+          "isg_auto_restart": "Auto Restart ISG",
+          "isg_memory_threshold": "ISG Memory Threshold (%)",
+          "isg_cpu_threshold": "ISG CPU Threshold (%)"
+        }
+      },
+      "apps": {
+        "title": "App Configuration",
+        "description": "Configure applications for {device_name}",
+        "data": {
+          "app_youtube": "YouTube Package",
+          "app_netflix": "Netflix Package",
+          "app_spotify": "Spotify Package",
+          "app_isg": "ISG Package",
+          "visible_apps": "Visible Apps"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to device. Please check the IP address and ensure ADB debugging is enabled.",
+      "timeout": "Connection timeout. Please check network connectivity.",
+      "unknown": "Unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "Device is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Android TV Box Options",
+        "description": "Update configuration options",
+        "data": {
+          "screenshot_path": "Screenshot Path",
+          "screenshot_keep_count": "Screenshots to Keep",
+          "update_interval": "Update Interval (seconds)",
+          "isg_monitoring": "Enable ISG Monitoring",
+          "isg_auto_restart": "Auto Restart ISG",
+          "isg_memory_threshold": "ISG Memory Threshold (%)",
+          "isg_cpu_threshold": "ISG CPU Threshold (%)",
+          "visible_apps": "Visible Apps"
+        }
+      }
+    }
+  }
+}
