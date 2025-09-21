@@ -71,8 +71,8 @@ class AndroidTVMediaPlayer(CoordinatorEntity[AndroidTVUpdateCoordinator], MediaP
         self._attr_name = f"{entry.data.get('device_name', 'Android TV Box')} Media Player"
         
         # Get configured apps
-        self._configured_apps = entry.data.get(CONF_APPS, {})
-        self._visible_apps = entry.data.get(CONF_VISIBLE_APPS, list(self._configured_apps.keys()))
+        self._configured_apps = coordinator.get_config_value(CONF_APPS, {})
+        self._visible_apps = coordinator.get_config_value(CONF_VISIBLE_APPS, list(self._configured_apps.keys()))
     
     @property
     def device_info(self) -> Dict[str, Any]:

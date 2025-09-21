@@ -43,8 +43,8 @@ class AndroidTVAppSelector(CoordinatorEntity[AndroidTVUpdateCoordinator], Select
         
         # Get configured apps with defaults
         from .const import DEFAULT_APPS
-        self._configured_apps = entry.data.get(CONF_APPS, DEFAULT_APPS.copy())
-        self._visible_apps = entry.data.get(CONF_VISIBLE_APPS, list(self._configured_apps.keys()))
+        self._configured_apps = coordinator.get_config_value(CONF_APPS, DEFAULT_APPS.copy())
+        self._visible_apps = coordinator.get_config_value(CONF_VISIBLE_APPS, list(self._configured_apps.keys()))
         
         # Ensure we always have at least one option for HomeKit compatibility
         if not self._visible_apps:

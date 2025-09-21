@@ -210,6 +210,10 @@ class AndroidTVUpdateCoordinator(DataUpdateCoordinator):
         if not hasattr(self, 'data') or self.data is None:
             self.data = AndroidTVState()
     
+    def get_config_value(self, key: str, default=None):
+        """Get configuration value with default."""
+        return self.config.get(key, default)
+    
     async def _async_update_data(self) -> AndroidTVState:
         """Fetch data from device."""
         # Ensure data object exists

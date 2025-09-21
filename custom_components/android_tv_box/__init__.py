@@ -14,6 +14,13 @@ from .coordinator import AndroidTVUpdateCoordinator
 _LOGGER = logging.getLogger(__name__)
 
 
+def _get_merged_config(entry: ConfigEntry) -> Dict[str, Any]:
+    """Get merged configuration from entry data and options."""
+    config = dict(entry.data)
+    config.update(entry.options)
+    return config
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Android TV Box from a config entry."""
     host = entry.data[CONF_HOST]
@@ -22,11 +29,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Create ADB manager
     adb_manager = ADBManager(host, port)
     
+    # Get merged configuration from data and options
+    merged_config = _get_merged_config(entry)
+    
     # Create update coordinator
     coordinator = AndroidTVUpdateCoordinator(
         hass=hass,
         adb_manager=adb_manager,
-        config=entry.data,
+        config=merged_config,
     )
     
     # Test initial connection

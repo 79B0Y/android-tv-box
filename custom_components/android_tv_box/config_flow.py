@@ -210,11 +210,15 @@ class AndroidTVBoxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if not apps_config:
             apps_config = DEFAULT_APPS.copy()
         
-        # Create final configuration
+        # Create configuration data (immutable setup data only)
         config_data = {
             CONF_HOST: self._host,
             CONF_PORT: self._port,
             CONF_DEVICE_NAME: self._device_name,
+        }
+        
+        # Create options data (changeable configuration)
+        options_data = {
             CONF_SCREENSHOT_PATH: options_input[CONF_SCREENSHOT_PATH],
             CONF_SCREENSHOT_KEEP_COUNT: options_input[CONF_SCREENSHOT_KEEP_COUNT],
             CONF_UPDATE_INTERVAL: options_input[CONF_UPDATE_INTERVAL],
@@ -229,6 +233,7 @@ class AndroidTVBoxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_create_entry(
             title=self._device_name,
             data=config_data,
+            options=options_data,
         )
     
     @staticmethod
