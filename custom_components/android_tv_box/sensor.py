@@ -12,6 +12,7 @@ from homeassistant.const import PERCENTAGE, UnitOfInformation
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.entity_registry import async_get as er_async_get
 
 from .const import DOMAIN, ISG_HEALTH_HEALTHY, ISG_HEALTH_NOT_RUNNING
 from .coordinator import AndroidTVUpdateCoordinator
@@ -28,20 +29,30 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator = data["coordinator"]
     
-    entities = [
-        AndroidTVBrightnessSensor(coordinator, entry),
-        AndroidTVNetworkSensor(coordinator, entry),
-        AndroidTVAppSensor(coordinator, entry),
-        AndroidTVCPUSensor(coordinator, entry),
-        AndroidTVMemorySensor(coordinator, entry),
-        AndroidTVISGStatusSensor(coordinator, entry),
-        AndroidTVISGMemorySensor(coordinator, entry),
-        AndroidTVISGCPUSensor(coordinator, entry),
-        AndroidTVISGUptimeSensor(coordinator, entry),
-        AndroidTVISGCrashCountSensor(coordinator, entry),
+    # Deduplicate per unique_id
+    er = er_async_get(hass)
+    planned = [
+        ("sensor", f"{entry.entry_id}_brightness", AndroidTVBrightnessSensor),
+        ("sensor", f"{entry.entry_id}_network", AndroidTVNetworkSensor),
+        ("sensor", f"{entry.entry_id}_current_app", AndroidTVAppSensor),
+        ("sensor", f"{entry.entry_id}_cpu", AndroidTVCPUSensor),
+        ("sensor", f"{entry.entry_id}_memory_usage", AndroidTVMemorySensor),
+        ("sensor", f"{entry.entry_id}_isg_status", AndroidTVISGStatusSensor),
+        ("sensor", f"{entry.entry_id}_isg_memory", AndroidTVISGMemorySensor),
+        ("sensor", f"{entry.entry_id}_isg_cpu", AndroidTVISGCPUSensor),
+        ("sensor", f"{entry.entry_id}_isg_uptime", AndroidTVISGUptimeSensor),
+        ("sensor", f"{entry.entry_id}_isg_crash_count", AndroidTVISGCrashCountSensor),
     ]
-    
-    async_add_entities(entities, True)
+    entities = []
+    for domain, unique_id, cls in planned:
+        existing = er.async_get_entity_id(domain, DOMAIN, unique_id)
+        if existing:
+            _LOGGER.debug("Sensor already exists: %s - skipping duplicate", existing)
+            continue
+        entities.append(cls(coordinator, entry))
+
+    if entities:
+        async_add_entities(entities, True)
 
 
 class AndroidTVBaseSensor(CoordinatorEntity[AndroidTVUpdateCoordinator], SensorEntity):

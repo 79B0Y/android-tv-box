@@ -8,6 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.entity_registry import async_get as er_async_get
 
 from .const import DOMAIN, IMMEDIATE_FEEDBACK_TIMINGS, POWER_STATE_ON
 from .coordinator import AndroidTVUpdateCoordinator
@@ -24,13 +25,23 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator = data["coordinator"]
     
-    entities = [
-        AndroidTVPowerSwitch(coordinator, entry),
-        AndroidTVWiFiSwitch(coordinator, entry),
-        AndroidTVADBSwitch(coordinator, entry),
+    # Deduplicate per unique_id
+    er = er_async_get(hass)
+    planned = [
+        ("switch", f"{entry.entry_id}_power", AndroidTVPowerSwitch),
+        ("switch", f"{entry.entry_id}_wifi", AndroidTVWiFiSwitch),
+        ("switch", f"{entry.entry_id}_adb", AndroidTVADBSwitch),
     ]
-    
-    async_add_entities(entities, True)
+    entities = []
+    for domain, unique_id, cls in planned:
+        existing = er.async_get_entity_id(domain, DOMAIN, unique_id)
+        if existing:
+            _LOGGER.debug("Switch already exists: %s - skipping duplicate", existing)
+            continue
+        entities.append(cls(coordinator, entry))
+
+    if entities:
+        async_add_entities(entities, True)
 
 
 class AndroidTVBaseSwitch(CoordinatorEntity[AndroidTVUpdateCoordinator], SwitchEntity):

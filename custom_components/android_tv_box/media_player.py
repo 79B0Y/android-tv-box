@@ -14,6 +14,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.entity_registry import async_get as er_async_get
 
 from .const import (
     CONF_APPS,
@@ -40,7 +41,14 @@ async def async_setup_entry(
     """Set up the Android TV Box media player."""
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator = data["coordinator"]
-    
+    # Deduplicate: skip if entity with same unique_id already exists
+    er = er_async_get(hass)
+    unique_id = f"{entry.entry_id}_media_player"
+    existing = er.async_get_entity_id("media_player", DOMAIN, unique_id)
+    if existing:
+        _LOGGER.debug("Media player already exists: %s - skipping duplicate", existing)
+        return
+
     async_add_entities([AndroidTVMediaPlayer(coordinator, entry)], True)
 
 

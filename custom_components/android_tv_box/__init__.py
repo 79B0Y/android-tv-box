@@ -23,6 +23,12 @@ def _get_merged_config(entry: ConfigEntry) -> Dict[str, Any]:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Android TV Box from a config entry."""
+    # Prevent double-setup in rare race conditions
+    hass.data.setdefault(DOMAIN, {})
+    existing = hass.data[DOMAIN].get(entry.entry_id)
+    if existing and existing.get("initialized"):
+        _LOGGER.debug("Entry %s already initialized; skipping duplicate setup", entry.entry_id)
+        return True
     host = entry.data[CONF_HOST]
     port = entry.data[CONF_PORT]
     
@@ -51,10 +57,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
     
     # Store coordinator in hass data
-    hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {
         "coordinator": coordinator,
         "adb_manager": adb_manager,
+        "initialized": True,
     }
     
     # Set up platforms

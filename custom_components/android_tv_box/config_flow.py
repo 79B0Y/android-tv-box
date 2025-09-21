@@ -10,8 +10,6 @@ from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import config_validation as cv
-
-from .adb_manager import ADBManager
 from .const import (
     CONF_APPS,
     CONF_DEVICE_NAME,
@@ -70,44 +68,74 @@ STEP_OPTIONS_DATA_SCHEMA = vol.Schema({
 
 
 async def validate_input(hass: HomeAssistant, data: Dict[str, Any]) -> Dict[str, Any]:
-    """Validate the user input allows us to connect."""
+    """Validate user input and basic reachability without requiring adb-shell."""
     host = data[CONF_HOST]
     port = data[CONF_PORT]
-    
-    # Create ADB manager and test connection
-    adb_manager = ADBManager(host, port)
-    
+
+    # Try to use ADBManager if the dependency is available; otherwise fall back to TCP check
+    adb_available = True
+    ADBManager = None  # type: ignore
     try:
-        # Attempt to connect with timeout
-        connected = await asyncio.wait_for(adb_manager.connect(), timeout=10)
-        
-        if not connected:
-            raise Exception("Connection failed")
-        
-        # Get device info for validation
-        device_info = await adb_manager.get_device_info()
-        
-        # Test basic functionality
-        power_state, screen_on = await adb_manager.get_power_state()
-        
-        # Cleanup
-        await adb_manager.disconnect()
-        
-        # Return validated info
-        return {
-            "title": data.get(CONF_DEVICE_NAME, DEFAULT_DEVICE_NAME),
-            "device_info": device_info,
-            "host": host,
-            "port": port,
-        }
-        
-    except asyncio.TimeoutError:
-        await adb_manager.disconnect()
-        raise Exception(ERROR_TIMEOUT)
-    except Exception as e:
-        await adb_manager.disconnect()
-        _LOGGER.error("Validation failed: %s", e)
-        raise Exception(ERROR_CANNOT_CONNECT)
+        from .adb_manager import ADBManager as _ADBManager  # local import to avoid hard dependency during flow
+        ADBManager = _ADBManager
+    except Exception:  # pragma: no cover - best effort in config flow
+        adb_available = False
+
+    # If adb-shell available, do a real connect; otherwise do a lightweight TCP reachability check
+    if adb_available and ADBManager is not None:
+        adb_manager = ADBManager(host, port)
+        try:
+            connected = await asyncio.wait_for(adb_manager.connect(), timeout=10)
+            if not connected:
+                raise Exception("Connection failed")
+
+            device_info = await adb_manager.get_device_info()
+            await adb_manager.disconnect()
+
+            return {
+                "title": data.get(CONF_DEVICE_NAME, DEFAULT_DEVICE_NAME),
+                "device_info": device_info,
+                "host": host,
+                "port": port,
+            }
+        except asyncio.TimeoutError:
+            await adb_manager.disconnect()
+            raise Exception(ERROR_TIMEOUT)
+        except Exception as e:
+            try:
+                await adb_manager.disconnect()
+            except Exception:
+                pass
+            _LOGGER.error("Validation failed via ADB: %s", e)
+            raise Exception(ERROR_CANNOT_CONNECT)
+    else:
+        # Lightweight TCP check: ensure the port is reachable quickly
+        try:
+            conn = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=5)
+            reader, writer = conn
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+            return {
+                "title": data.get(CONF_DEVICE_NAME, DEFAULT_DEVICE_NAME),
+                "device_info": {
+                    "model": "Unknown",
+                    "manufacturer": "Android",
+                    "android_version": "Unknown",
+                    "api_level": "Unknown",
+                    "serial": "Unknown",
+                },
+                "host": host,
+                "port": port,
+            }
+        except asyncio.TimeoutError:
+            raise Exception(ERROR_TIMEOUT)
+        except Exception as e:  # connection refused/unreachable
+            _LOGGER.error("TCP reachability check failed: %s", e)
+            raise Exception(ERROR_CANNOT_CONNECT)
 
 
 class AndroidTVBoxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
