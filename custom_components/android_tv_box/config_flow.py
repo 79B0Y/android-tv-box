@@ -39,14 +39,15 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Schema for user input (first step: only basic info)
+# ---------- Schemas ----------
+# Step 1 (Basic)
 STEP_USER_DATA_SCHEMA = vol.Schema({
     vol.Required(CONF_HOST): cv.string,
     vol.Optional(CONF_PORT, default=DEFAULT_PORT): cv.port,
     vol.Optional(CONF_DEVICE_NAME, default=DEFAULT_DEVICE_NAME): cv.string,
 })
 
-# Schema for options (advanced config)
+# Advanced options schema (we也在第一步接受这些字段)
 STEP_OPTIONS_DATA_SCHEMA = vol.Schema({
     vol.Optional(CONF_SCREENSHOT_PATH, default=DEFAULT_SCREENSHOT_PATH): cv.string,
     vol.Optional(CONF_SCREENSHOT_KEEP_COUNT, default=DEFAULT_SCREENSHOT_KEEP_COUNT): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
@@ -57,7 +58,14 @@ STEP_OPTIONS_DATA_SCHEMA = vol.Schema({
     vol.Optional(CONF_ISG_CPU_THRESHOLD, default=DEFAULT_ISG_CPU_THRESHOLD): vol.All(vol.Coerce(int), vol.Range(min=50, max=99)),
 })
 
+# 为了避免“extra keys not allowed”，在第一步就把两套 schema 合并展示
+STEP_USER_WITH_ADVANCED_SCHEMA = vol.Schema({
+    **STEP_USER_DATA_SCHEMA.schema,          # host / port / device_name
+    **STEP_OPTIONS_DATA_SCHEMA.schema,       # screenshot / isg_* 等
+})
 
+
+# ---------- Validation ----------
 async def validate_input(hass: HomeAssistant, data: Dict[str, Any]) -> Dict[str, Any]:
     """Validate the user input allows us to connect."""
     host = data[CONF_HOST]
@@ -72,7 +80,6 @@ async def validate_input(hass: HomeAssistant, data: Dict[str, Any]) -> Dict[str,
 
         device_info = await adb_manager.get_device_info()
         await adb_manager.get_power_state()
-
         await adb_manager.disconnect()
 
         return {
@@ -91,6 +98,7 @@ async def validate_input(hass: HomeAssistant, data: Dict[str, Any]) -> Dict[str,
         raise Exception(ERROR_CANNOT_CONNECT)
 
 
+# ---------- Config Flow ----------
 class AndroidTVBoxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Android TV Box Integration."""
 
@@ -102,32 +110,52 @@ class AndroidTVBoxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._device_name: Optional[str] = None
         self._device_info: Optional[Dict[str, Any]] = None
         self._errors: Dict[str, str] = {}
+        self._pending_options: Dict[str, Any] = {}  # 承接第一步的高级字段
 
     async def async_step_user(
         self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
-        """Handle the initial step (basic connection info)."""
+        """Handle the initial step (basic connection info + advanced options)."""
         if user_input is None:
             return self.async_show_form(
                 step_id="user",
-                data_schema=STEP_USER_DATA_SCHEMA,
+                data_schema=STEP_USER_WITH_ADVANCED_SCHEMA,
                 errors=self._errors,
             )
 
-        errors = {}
+        errors: Dict[str, str] = {}
         try:
-            info = await validate_input(self.hass, user_input)
+            # 拆分：basic & advanced
+            basic_keys = set(STEP_USER_DATA_SCHEMA.schema.keys())
+            basic_input = {k: v for k, v in user_input.items() if k in basic_keys}
+            advanced_input = {k: v for k, v in user_input.items() if k not in basic_keys}
 
+            info = await validate_input(self.hass, basic_input)
+
+            # 保存基本信息
             self._host = info["host"]
             self._port = info["port"]
             self._device_name = info["title"]
             self._device_info = info["device_info"]
 
+            # 保存本次在第一步填写的高级项，待 apps 步写入 entry.options
+            self._pending_options = {
+                **{
+                    CONF_SCREENSHOT_PATH: advanced_input.get(CONF_SCREENSHOT_PATH, DEFAULT_SCREENSHOT_PATH),
+                    CONF_SCREENSHOT_KEEP_COUNT: advanced_input.get(CONF_SCREENSHOT_KEEP_COUNT, DEFAULT_SCREENSHOT_KEEP_COUNT),
+                    CONF_UPDATE_INTERVAL: advanced_input.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),
+                    CONF_ISG_MONITORING: advanced_input.get(CONF_ISG_MONITORING, True),
+                    CONF_ISG_AUTO_RESTART: advanced_input.get(CONF_ISG_AUTO_RESTART, True),
+                    CONF_ISG_MEMORY_THRESHOLD: advanced_input.get(CONF_ISG_MEMORY_THRESHOLD, DEFAULT_ISG_MEMORY_THRESHOLD),
+                    CONF_ISG_CPU_THRESHOLD: advanced_input.get(CONF_ISG_CPU_THRESHOLD, DEFAULT_ISG_CPU_THRESHOLD),
+                }
+            }
+
             await self.async_set_unique_id(f"{self._host}_{self._port}")
             self._abort_if_unique_id_configured()
 
-            # jump to options step (advanced settings)
-            return await self.async_step_options()
+            # 进入 app 映射/可见性配置
+            return await self.async_step_apps()
 
         except Exception as e:
             error_code = str(e)
@@ -138,38 +166,20 @@ class AndroidTVBoxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=STEP_USER_DATA_SCHEMA,
+            data_schema=STEP_USER_WITH_ADVANCED_SCHEMA,
             errors=errors,
         )
 
-    async def async_step_options(
-        self, user_input: Optional[Dict[str, Any]] = None
-    ) -> FlowResult:
-        """Handle advanced options step."""
-        if user_input is None:
-            return self.async_show_form(
-                step_id="options",
-                data_schema=STEP_OPTIONS_DATA_SCHEMA,
-                description_placeholders={
-                    "device_name": self._device_name,
-                    "device_model": self._device_info.get("model", "Unknown"),
-                    "android_version": self._device_info.get("android_version", "Unknown"),
-                },
-            )
-
-        return await self.async_step_apps(user_input)
-
     async def async_step_apps(
-        self, options_input: Dict[str, Any],
-        user_input: Optional[Dict[str, Any]] = None
+        self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
         """Handle app configuration step."""
         if user_input is None:
+            # 动态生成 schema：默认显示 DEFAULT_APPS，并让用户选择可见项
             app_schema = vol.Schema({
                 vol.Optional(f"app_{name.lower()}", default=package): cv.string
                 for name, package in DEFAULT_APPS.items()
-            })
-            app_schema = app_schema.extend({
+            }).extend({
                 vol.Optional("visible_apps", default=list(DEFAULT_APPS.keys())): cv.multi_select(DEFAULT_APPS.keys()),
             })
             return self.async_show_form(
@@ -178,7 +188,8 @@ class AndroidTVBoxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 description_placeholders={"device_name": self._device_name},
             )
 
-        apps_config = {}
+        # 收集 App 映射与可见性
+        apps_config: Dict[str, str] = {}
         visible_apps = user_input.get("visible_apps", list(DEFAULT_APPS.keys()))
         for name in DEFAULT_APPS.keys():
             app_key = f"app_{name.lower()}"
@@ -187,19 +198,16 @@ class AndroidTVBoxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if not apps_config:
             apps_config = DEFAULT_APPS.copy()
 
+        # entry.data：不可变基础信息
         config_data = {
             CONF_HOST: self._host,
             CONF_PORT: self._port,
             CONF_DEVICE_NAME: self._device_name,
         }
+
+        # entry.options：可变高级配置 + apps
         options_data = {
-            CONF_SCREENSHOT_PATH: options_input[CONF_SCREENSHOT_PATH],
-            CONF_SCREENSHOT_KEEP_COUNT: options_input[CONF_SCREENSHOT_KEEP_COUNT],
-            CONF_UPDATE_INTERVAL: options_input[CONF_UPDATE_INTERVAL],
-            CONF_ISG_MONITORING: options_input[CONF_ISG_MONITORING],
-            CONF_ISG_AUTO_RESTART: options_input[CONF_ISG_AUTO_RESTART],
-            CONF_ISG_MEMORY_THRESHOLD: options_input[CONF_ISG_MEMORY_THRESHOLD],
-            CONF_ISG_CPU_THRESHOLD: options_input[CONF_ISG_CPU_THRESHOLD],
+            **self._pending_options,
             CONF_APPS: apps_config,
             CONF_VISIBLE_APPS: visible_apps,
         }
@@ -212,9 +220,11 @@ class AndroidTVBoxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     def async_get_options_flow(config_entry):
+        """Get the options flow for this handler."""
         return AndroidTVBoxOptionsFlowHandler(config_entry)
 
 
+# ---------- Options Flow ----------
 class AndroidTVBoxOptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options flow for Android TV Box Integration."""
 
@@ -228,46 +238,28 @@ class AndroidTVBoxOptionsFlowHandler(config_entries.OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
-        # merge options + data (so defaults are correct)
-        current_config = {**self.config_entry.options, **self.config_entry.data}
+        # 用 options 覆盖 data（让已保存的可变项正确显示默认值）
+        current_config = {**self.config_entry.data, **self.config_entry.options}
 
         options_schema = vol.Schema({
-            vol.Optional(
-                CONF_SCREENSHOT_PATH,
-                default=current_config.get(CONF_SCREENSHOT_PATH, DEFAULT_SCREENSHOT_PATH)
-            ): cv.string,
-            vol.Optional(
-                CONF_SCREENSHOT_KEEP_COUNT,
-                default=current_config.get(CONF_SCREENSHOT_KEEP_COUNT, DEFAULT_SCREENSHOT_KEEP_COUNT)
-            ): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
-            vol.Optional(
-                CONF_UPDATE_INTERVAL,
-                default=current_config.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
-            ): vol.All(vol.Coerce(int), vol.Range(min=30, max=300)),
-            vol.Optional(
-                CONF_ISG_MONITORING,
-                default=current_config.get(CONF_ISG_MONITORING, True)
-            ): cv.boolean,
-            vol.Optional(
-                CONF_ISG_AUTO_RESTART,
-                default=current_config.get(CONF_ISG_AUTO_RESTART, True)
-            ): cv.boolean,
-            vol.Optional(
-                CONF_ISG_MEMORY_THRESHOLD,
-                default=current_config.get(CONF_ISG_MEMORY_THRESHOLD, DEFAULT_ISG_MEMORY_THRESHOLD)
-            ): vol.All(vol.Coerce(int), vol.Range(min=50, max=95)),
-            vol.Optional(
-                CONF_ISG_CPU_THRESHOLD,
-                default=current_config.get(CONF_ISG_CPU_THRESHOLD, DEFAULT_ISG_CPU_THRESHOLD)
-            ): vol.All(vol.Coerce(int), vol.Range(min=50, max=99)),
+            vol.Optional(CONF_SCREENSHOT_PATH, default=current_config.get(CONF_SCREENSHOT_PATH, DEFAULT_SCREENSHOT_PATH)): cv.string,
+            vol.Optional(CONF_SCREENSHOT_KEEP_COUNT, default=current_config.get(CONF_SCREENSHOT_KEEP_COUNT, DEFAULT_SCREENSHOT_KEEP_COUNT)): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
+            vol.Optional(CONF_UPDATE_INTERVAL, default=current_config.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)): vol.All(vol.Coerce(int), vol.Range(min=30, max=300)),
+            vol.Optional(CONF_ISG_MONITORING, default=current_config.get(CONF_ISG_MONITORING, True)): cv.boolean,
+            vol.Optional(CONF_ISG_AUTO_RESTART, default=current_config.get(CONF_ISG_AUTO_RESTART, True)): cv.boolean,
+            vol.Optional(CONF_ISG_MEMORY_THRESHOLD, default=current_config.get(CONF_ISG_MEMORY_THRESHOLD, DEFAULT_ISG_MEMORY_THRESHOLD)): vol.All(vol.Coerce(int), vol.Range(min=50, max=95)),
+            vol.Optional(CONF_ISG_CPU_THRESHOLD, default=current_config.get(CONF_ISG_CPU_THRESHOLD, DEFAULT_ISG_CPU_THRESHOLD)): vol.All(vol.Coerce(int), vol.Range(min=50, max=99)),
         })
 
+        # Apps 与可见性
         current_apps = current_config.get(CONF_APPS, DEFAULT_APPS)
-        current_visible = current_config.get(CONF_VISIBLE_APPS, list(DEFAULT_APPS.keys()))
+        current_visible = current_config.get(CONF_VISIBLE_APPS, list(current_apps.keys() or DEFAULT_APPS.keys()))
+
         for name in current_apps.keys():
             options_schema = options_schema.extend({
                 vol.Optional(f"app_{name.lower()}", default=current_apps.get(name, "")): cv.string,
             })
+
         options_schema = options_schema.extend({
             vol.Optional("visible_apps", default=current_visible): cv.multi_select(list(current_apps.keys())),
         })
