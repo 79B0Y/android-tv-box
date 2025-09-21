@@ -143,7 +143,8 @@ class ADBManager(ADBManagerInterface):
             # The connect method might be sync, so run it in executor
             def _connect():
                 self._logger.debug("Executing ADB connect for %s:%s", self.host, self.port)
-                return self._device.connect(rsa_keys=None, auth_timeout_s=ADB_TIMEOUT)
+                rsa_keys = getattr(self, "_rsa_signers", None)
+                return self._device.connect(rsa_keys=rsa_keys, auth_timeout_s=ADB_TIMEOUT)
             
             # Run the potentially blocking connect in an executor
             loop = asyncio.get_event_loop()
@@ -197,18 +198,19 @@ class ADBManager(ADBManagerInterface):
             
         try:
             # Quick connectivity test
-            result = await asyncio.wait_for(
-                self.execute_command("shell echo ping"),
-                timeout=5
-            )
+            result = await asyncio.wait_for(self.execute_command("echo ping"), timeout=5)
             return result.success and "ping" in result.stdout
         except Exception:
             self._connected = False
             return False
     
     async def execute_command(self, command: str, use_cache: bool = True) -> ADBCommandResult:
-        """Execute ADB command with caching and concurrency control."""
-        full_command = f"-s {self.device_id} {command}"
+        """Execute a shell command on the connected device with caching and concurrency control.
+
+        Note: With adb-shell, we do not prefix commands with 'shell' or '-s'.
+        Commands should be raw device shell commands like 'input keyevent 26'.
+        """
+        full_command = command
         cache_key = self._cache.get_cache_key(self.device_id, full_command)
         
         # Check cache first

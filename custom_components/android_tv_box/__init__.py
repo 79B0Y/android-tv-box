@@ -1,6 +1,7 @@
 """The Android TV Box Integration."""
 import asyncio
 import logging
+import os
 from typing import Any, Dict
 
 from homeassistant.config_entries import ConfigEntry
@@ -32,8 +33,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     host = entry.data[CONF_HOST]
     port = entry.data[CONF_PORT]
     
-    # Create ADB manager
+    # Prepare ADB authentication key (generate if missing)
+    key_dir = hass.config.path(".storage")
+    os.makedirs(key_dir, exist_ok=True)
+    key_path = os.path.join(key_dir, f"android_tv_box_{entry.entry_id}.adb_key")
+
+    rsa_signers = None
+    try:
+        from adb_shell.auth.keygen import keygen
+        from adb_shell.auth.sign_pythonrsa import PythonRSASigner
+
+        if not os.path.exists(key_path):
+            keygen(key_path)
+        rsa_signers = [PythonRSASigner.FromRSAKeyPath(key_path)]
+    except Exception as e:  # If dependency not available yet during setup, continue without keys
+        _LOGGER.debug("ADB key setup skipped: %s", e)
+
+    # Create ADB manager with keys (if available)
     adb_manager = ADBManager(host, port)
+    if rsa_signers:
+        # Monkey-attach signers for use during connect
+        setattr(adb_manager, "_rsa_signers", rsa_signers)
     
     # Get merged configuration from data and options
     merged_config = _get_merged_config(entry)

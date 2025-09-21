@@ -79,76 +79,76 @@ KEYCODE_MENU = 82
 # ADB commands
 ADB_COMMANDS = {
     # Media control
-    "media_play": "shell input keyevent {keycode}".format(keycode=KEYCODE_MEDIA_PLAY),
-    "media_pause": "shell input keyevent {keycode}".format(keycode=KEYCODE_MEDIA_PAUSE),
-    "media_stop": "shell input keyevent {keycode}".format(keycode=KEYCODE_MEDIA_STOP),
-    "media_play_pause": "shell input keyevent {keycode}".format(keycode=KEYCODE_MEDIA_PLAY_PAUSE),
-    "media_next": "shell input keyevent {keycode}".format(keycode=KEYCODE_MEDIA_NEXT),
-    "media_previous": "shell input keyevent {keycode}".format(keycode=KEYCODE_MEDIA_PREVIOUS),
-    
+    "media_play": "input keyevent {keycode}".format(keycode=KEYCODE_MEDIA_PLAY),
+    "media_pause": "input keyevent {keycode}".format(keycode=KEYCODE_MEDIA_PAUSE),
+    "media_stop": "input keyevent {keycode}".format(keycode=KEYCODE_MEDIA_STOP),
+    "media_play_pause": "input keyevent {keycode}".format(keycode=KEYCODE_MEDIA_PLAY_PAUSE),
+    "media_next": "input keyevent {keycode}".format(keycode=KEYCODE_MEDIA_NEXT),
+    "media_previous": "input keyevent {keycode}".format(keycode=KEYCODE_MEDIA_PREVIOUS),
+
     # Volume control
-    "volume_up": "shell input keyevent {keycode}".format(keycode=KEYCODE_VOLUME_UP),
-    "volume_down": "shell input keyevent {keycode}".format(keycode=KEYCODE_VOLUME_DOWN),
-    "volume_mute": "shell input keyevent {keycode}".format(keycode=KEYCODE_VOLUME_MUTE),
-    
+    "volume_up": "input keyevent {keycode}".format(keycode=KEYCODE_VOLUME_UP),
+    "volume_down": "input keyevent {keycode}".format(keycode=KEYCODE_VOLUME_DOWN),
+    "volume_mute": "input keyevent {keycode}".format(keycode=KEYCODE_VOLUME_MUTE),
+
     # Power control
-    "power_on": "shell input keyevent {keycode}".format(keycode=KEYCODE_WAKEUP),
-    "power_off": "shell input keyevent {keycode}".format(keycode=KEYCODE_POWER),
-    
+    "power_on": "input keyevent {keycode}".format(keycode=KEYCODE_WAKEUP),
+    "power_off": "input keyevent {keycode}".format(keycode=KEYCODE_POWER),
+
     # Navigation
-    "nav_up": "shell input keyevent {keycode}".format(keycode=KEYCODE_DPAD_UP),
-    "nav_down": "shell input keyevent {keycode}".format(keycode=KEYCODE_DPAD_DOWN),
-    "nav_left": "shell input keyevent {keycode}".format(keycode=KEYCODE_DPAD_LEFT),
-    "nav_right": "shell input keyevent {keycode}".format(keycode=KEYCODE_DPAD_RIGHT),
-    "nav_center": "shell input keyevent {keycode}".format(keycode=KEYCODE_DPAD_CENTER),
-    "nav_back": "shell input keyevent {keycode}".format(keycode=KEYCODE_BACK),
-    "nav_home": "shell input keyevent {keycode}".format(keycode=KEYCODE_HOME),
-    "nav_menu": "shell input keyevent {keycode}".format(keycode=KEYCODE_MENU),
+    "nav_up": "input keyevent {keycode}".format(keycode=KEYCODE_DPAD_UP),
+    "nav_down": "input keyevent {keycode}".format(keycode=KEYCODE_DPAD_DOWN),
+    "nav_left": "input keyevent {keycode}".format(keycode=KEYCODE_DPAD_LEFT),
+    "nav_right": "input keyevent {keycode}".format(keycode=KEYCODE_DPAD_RIGHT),
+    "nav_center": "input keyevent {keycode}".format(keycode=KEYCODE_DPAD_CENTER),
+    "nav_back": "input keyevent {keycode}".format(keycode=KEYCODE_BACK),
+    "nav_home": "input keyevent {keycode}".format(keycode=KEYCODE_HOME),
+    "nav_menu": "input keyevent {keycode}".format(keycode=KEYCODE_MENU),
 }
 
 # State query commands
 STATE_COMMANDS = {
-    "media_state": "shell dumpsys media_session | awk '/Sessions Stack/ {inStack=1} inStack && /package=/ {pkg=$0} /active=true/ {active=1} /state=PlaybackState/ && active { if (match($0, /state=([A-Z_]+)\\([0-9]+\\)/, m)) { print m[1]; exit } }'",
-    "volume_level": "shell cmd media_session volume --stream 3 --get",
-    "power_state": "shell dumpsys power | grep -E '(mWakefulness|mScreenOn)'",
-    "wifi_state": "shell settings get global wifi_on",
-    "wifi_ssid": "shell dumpsys wifi | grep 'SSID:' | head -1",
-    "ip_address": "shell ip addr show wlan0 | grep 'inet '",
-    "current_app": "shell dumpsys activity activities | grep 'ActivityRecord' | head -1",
-    "current_activity": "shell dumpsys activity top | grep ACTIVITY",
-    "installed_apps": "shell pm list packages -3",
-    "brightness": "shell settings get system screen_brightness",
-    "device_info": "shell getprop",
-    "screenshot": "shell screencap -p {path}",
+    "media_state": "dumpsys media_session | awk '/Sessions Stack/ {inStack=1} inStack && /package=/ {pkg=$0} /active=true/ {active=1} /state=PlaybackState/ && active { if (match($0, /state=([A-Z_]+)\\([0-9]+\\)/, m)) { print m[1]; exit } }'",
+    "volume_level": "cmd media_session volume --stream 3 --get",
+    "power_state": "dumpsys power | grep -E '(mWakefulness|mScreenOn)'",
+    "wifi_state": "settings get global wifi_on",
+    "wifi_ssid": "dumpsys wifi | grep 'SSID:' | head -1",
+    "ip_address": "ip addr show wlan0 | grep 'inet '",
+    "current_app": "dumpsys activity activities | grep 'ActivityRecord' | head -1",
+    "current_activity": "dumpsys activity top | grep ACTIVITY",
+    "installed_apps": "pm list packages -3",
+    "brightness": "settings get system screen_brightness",
+    "device_info": "getprop",
+    "screenshot": "screencap -p {path}",
 }
 
 # ISG monitoring commands
 ISG_COMMANDS = {
-    "process_status": "shell ps | grep com.linknlink.app.device.isg",
-    "memory_usage": "shell dumpsys meminfo com.linknlink.app.device.isg | head -20",
-    "cpu_usage": "shell top -p $(pidof com.linknlink.app.device.isg) -n 1",
-    "app_logs": "shell logcat -s ISG:* -v time -t 50",
-    "crash_logs": "shell logcat -b crash -v time -t 25",
-    "anr_logs": "shell logcat -s ActivityManager:* -v time -t 10 | grep ANR",
+    "process_status": "ps | grep com.linknlink.app.device.isg",
+    "memory_usage": "dumpsys meminfo com.linknlink.app.device.isg | head -20",
+    "cpu_usage": "top -p $(pidof com.linknlink.app.device.isg) -n 1",
+    "app_logs": "logcat -s ISG:* -v time -t 50",
+    "crash_logs": "logcat -b crash -v time -t 25",
+    "anr_logs": "logcat -s ActivityManager:* -v time -t 10 | grep ANR",
 }
 
 # ISG control commands  
 ISG_CONTROL_COMMANDS = {
-    "force_start": "shell am start -n com.linknlink.app.device.isg/.MainActivity --activity-clear-top",
-    "force_stop": "shell am force-stop com.linknlink.app.device.isg",
-    "restart": "shell 'am force-stop com.linknlink.app.device.isg && sleep 2 && am start -n com.linknlink.app.device.isg/.MainActivity'",
-    "clear_cache": "shell pm clear com.linknlink.app.device.isg",
+    "force_start": "am start -n com.linknlink.app.device.isg/.MainActivity --activity-clear-top",
+    "force_stop": "am force-stop com.linknlink.app.device.isg",
+    "restart": "am force-stop com.linknlink.app.device.isg && sleep 2 && am start -n com.linknlink.app.device.isg/.MainActivity",
+    "clear_cache": "pm clear com.linknlink.app.device.isg",
 }
 
 # Set commands
 SET_COMMANDS = {
-    "set_volume": "shell service call audio 12 i32 3 i32 {level} i32 0",
-    "set_brightness": "shell settings put system screen_brightness {level}",
-    "start_app": "shell am start {package}",
-    "cast_media": "shell am start -a android.intent.action.VIEW -d '{url}' --es android.intent.extra.REFERRER_NAME 'Home Assistant'",
-    "cast_youtube": "shell am start -a android.intent.action.VIEW -d 'https://www.youtube.com/watch?v={video_id}' -n com.google.android.youtube/.WatchWhileActivity",
-    "cast_netflix": "shell am start -a android.intent.action.VIEW -d 'https://www.netflix.com/watch/{video_id}' -n com.netflix.mediaclient/.ui.launch.UIWebViewActivity",
-    "cast_spotify": "shell am start -a android.intent.action.VIEW -d 'spotify:track:{track_id}' -n com.spotify.music/.MainActivity",
+    "set_volume": "service call audio 12 i32 3 i32 {level} i32 0",
+    "set_brightness": "settings put system screen_brightness {level}",
+    "start_app": "am start {package}",
+    "cast_media": "am start -a android.intent.action.VIEW -d '{url}' --es android.intent.extra.REFERRER_NAME 'Home Assistant'",
+    "cast_youtube": "am start -a android.intent.action.VIEW -d 'https://www.youtube.com/watch?v={video_id}' -n com.google.android.youtube/.WatchWhileActivity",
+    "cast_netflix": "am start -a android.intent.action.VIEW -d 'https://www.netflix.com/watch/{video_id}' -n com.netflix.mediaclient/.ui.launch.UIWebViewActivity",
+    "cast_spotify": "am start -a android.intent.action.VIEW -d 'spotify:track:{track_id}' -n com.spotify.music/.MainActivity",
 }
 
 # Wait times for immediate feedback (in seconds)
