@@ -6,10 +6,9 @@
   "documentation": "https://github.com/android-tv-box/android-tv-box-integration",
   "issue_tracker": "https://github.com/android-tv-box/android-tv-box-integration/issues",
   "requirements": [
-    "adb-shell>=0.4.4",
-    "pure-python-adb>=0.3.0"
+    "adb-shell>=0.4.4"
   ],
-  "version": "1.0.0",
+  "version": "1.0.1",
   "iot_class": "local_polling",
   "integration_type": "device",
   "after_dependencies": [],

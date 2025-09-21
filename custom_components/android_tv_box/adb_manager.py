@@ -8,9 +8,14 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from adb_shell.adb_device import AdbDeviceTcp
-from adb_shell.exceptions import TcpTimeoutException
-from pure_python_adb import PurePythonADBClient
+try:
+    from adb_shell.adb_device import AdbDeviceTcp
+    from adb_shell.exceptions import TcpTimeoutException
+except ImportError as e:
+    raise ImportError(
+        "Missing required dependency 'adb-shell'. "
+        "Please install it with: pip install adb-shell>=0.4.4"
+    ) from e
 
 from .const import (
     ADB_COMMANDS,
@@ -122,7 +127,6 @@ class ADBManager(ADBManagerInterface):
         self.port = port
         self.device_id = f"{host}:{port}"
         self._device: Optional[AdbDeviceTcp] = None
-        self._pure_adb: Optional[PurePythonADBClient] = None
         self._connected = False
         self._command_semaphore = asyncio.Semaphore(MAX_CONCURRENT_COMMANDS)
         self._cache = CommandCache()
@@ -131,7 +135,7 @@ class ADBManager(ADBManagerInterface):
     async def connect(self) -> bool:
         """Connect to Android TV device via ADB."""
         try:
-            # Try adb-shell first
+            # Connect using adb-shell
             self._device = AdbDeviceTcp(self.host, self.port, default_timeout_s=ADB_TIMEOUT)
             await asyncio.wait_for(self._device.connect(rsa_keys=None, auth_timeout_s=ADB_TIMEOUT), timeout=ADB_TIMEOUT)
             
@@ -140,22 +144,6 @@ class ADBManager(ADBManagerInterface):
             if result.success and "test" in result.stdout:
                 self._connected = True
                 self._logger.info("Connected to %s:%s via adb-shell", self.host, self.port)
-                return True
-            
-        except Exception as e:
-            self._logger.debug("adb-shell connection failed: %s", e)
-            
-        # Fallback to pure-python-adb
-        try:
-            self._device = None
-            self._pure_adb = PurePythonADBClient(self.host, self.port)
-            await asyncio.wait_for(self._pure_adb.connect(), timeout=ADB_TIMEOUT)
-            
-            # Test connection
-            result = await self._execute_with_pure_adb("shell echo test")
-            if result.success and "test" in result.stdout:
-                self._connected = True
-                self._logger.info("Connected to %s:%s via pure-python-adb", self.host, self.port)
                 return True
                 
         except Exception as e:
@@ -170,9 +158,6 @@ class ADBManager(ADBManagerInterface):
             if self._device:
                 await self._device.close()
                 self._device = None
-            if self._pure_adb:
-                await self._pure_adb.close()
-                self._pure_adb = None
         except Exception as e:
             self._logger.debug("Error during disconnect: %s", e)
         finally:
@@ -238,8 +223,6 @@ class ADBManager(ADBManagerInterface):
         try:
             if self._device:
                 return await self._execute_with_device(command)
-            elif self._pure_adb:
-                return await self._execute_with_pure_adb(command)
             else:
                 return ADBCommandResult(
                     success=False,
@@ -276,23 +259,6 @@ class ADBManager(ADBManagerInterface):
                 error=str(e)
             )
     
-    async def _execute_with_pure_adb(self, command: str) -> ADBCommandResult:
-        """Execute command using pure-python-adb."""
-        try:
-            result = await asyncio.wait_for(
-                self._pure_adb.shell(command),
-                timeout=ADB_TIMEOUT
-            )
-            return ADBCommandResult(
-                success=True,
-                stdout=result.strip() if result else "",
-                stderr=""
-            )
-        except Exception as e:
-            return ADBCommandResult(
-                success=False,
-                error=str(e)
-            )
     
     # Media control methods
     async def media_play(self) -> bool:
@@ -533,11 +499,15 @@ class ADBManager(ADBManagerInterface):
         if not await self.take_screenshot(path):
             return None
         
-        # Pull screenshot data
+        # Pull screenshot data using shell command since pull might not be available
         try:
             if self._device:
-                return await self._device.pull(path)
-            # For pure-python-adb, would need additional implementation
+                # Use base64 encoding to transfer binary data through shell
+                command = f"shell base64 {path}"
+                result = await self._execute_with_device(command)
+                if result.success and result.stdout:
+                    import base64
+                    return base64.b64decode(result.stdout.strip())
             return None
         except Exception as e:
             self._logger.error("Failed to get screenshot data: %s", e)
