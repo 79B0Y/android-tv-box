@@ -197,7 +197,7 @@ class AndroidTVBoxConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             
             # Add visible apps selection
             app_schema = app_schema.extend({
-                vol.Optional("visible_apps", default=list(DEFAULT_APPS.keys())): cv.multi_select(DEFAULT_APPS.keys()),
+                vol.Optional("visible_apps", default=list(DEFAULT_APPS.keys())): cv.multi_select(list(DEFAULT_APPS.keys())),
             })
             
             return self.async_show_form(
@@ -267,44 +267,47 @@ class AndroidTVBoxOptionsFlowHandler(config_entries.OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
         
-        # Get current configuration
-        current_config = self.config_entry.data
+        # Resolve defaults: prefer options, then data, then built-in defaults
+        current_options = dict(self.config_entry.options or {})
+        current_data = dict(self.config_entry.data or {})
+        def _get(key, default):
+            return current_options.get(key, current_data.get(key, default))
         
         # Create schema with current values
         options_schema = vol.Schema({
             vol.Optional(
                 CONF_SCREENSHOT_PATH,
-                default=current_config.get(CONF_SCREENSHOT_PATH, DEFAULT_SCREENSHOT_PATH)
+                default=_get(CONF_SCREENSHOT_PATH, DEFAULT_SCREENSHOT_PATH)
             ): cv.string,
             vol.Optional(
                 CONF_SCREENSHOT_KEEP_COUNT,
-                default=current_config.get(CONF_SCREENSHOT_KEEP_COUNT, DEFAULT_SCREENSHOT_KEEP_COUNT)
+                default=_get(CONF_SCREENSHOT_KEEP_COUNT, DEFAULT_SCREENSHOT_KEEP_COUNT)
             ): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
             vol.Optional(
                 CONF_UPDATE_INTERVAL,
-                default=current_config.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
+                default=_get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
             ): vol.All(vol.Coerce(int), vol.Range(min=30, max=300)),
             vol.Optional(
                 CONF_ISG_MONITORING,
-                default=current_config.get(CONF_ISG_MONITORING, True)
+                default=_get(CONF_ISG_MONITORING, True)
             ): cv.boolean,
             vol.Optional(
                 CONF_ISG_AUTO_RESTART,
-                default=current_config.get(CONF_ISG_AUTO_RESTART, True)
+                default=_get(CONF_ISG_AUTO_RESTART, True)
             ): cv.boolean,
             vol.Optional(
                 CONF_ISG_MEMORY_THRESHOLD,
-                default=current_config.get(CONF_ISG_MEMORY_THRESHOLD, DEFAULT_ISG_MEMORY_THRESHOLD)
+                default=_get(CONF_ISG_MEMORY_THRESHOLD, DEFAULT_ISG_MEMORY_THRESHOLD)
             ): vol.All(vol.Coerce(int), vol.Range(min=50, max=95)),
             vol.Optional(
                 CONF_ISG_CPU_THRESHOLD,
-                default=current_config.get(CONF_ISG_CPU_THRESHOLD, DEFAULT_ISG_CPU_THRESHOLD)
+                default=_get(CONF_ISG_CPU_THRESHOLD, DEFAULT_ISG_CPU_THRESHOLD)
             ): vol.All(vol.Coerce(int), vol.Range(min=50, max=99)),
         })
         
         # Add app configuration
-        current_apps = current_config.get(CONF_APPS, DEFAULT_APPS)
-        current_visible = current_config.get(CONF_VISIBLE_APPS, list(DEFAULT_APPS.keys()))
+        current_apps = _get(CONF_APPS, DEFAULT_APPS)
+        current_visible = _get(CONF_VISIBLE_APPS, list(DEFAULT_APPS.keys()))
         
         for name in current_apps.keys():
             options_schema = options_schema.extend({
