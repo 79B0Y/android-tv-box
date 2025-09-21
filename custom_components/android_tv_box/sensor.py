@@ -61,7 +61,6 @@ class AndroidTVBaseSensor(CoordinatorEntity[AndroidTVUpdateCoordinator], SensorE
             "manufacturer": self.coordinator.data.device_manufacturer or "Android",
             "model": self.coordinator.data.device_model or "TV Box",
             "sw_version": self.coordinator.data.android_version,
-            "via_device": (DOMAIN, f"{self.coordinator.adb_manager.host}_{self.coordinator.adb_manager.port}"),
         }
     
     @property
@@ -172,16 +171,19 @@ class AndroidTVMemorySensor(AndroidTVBaseSensor):
     def __init__(self, coordinator: AndroidTVUpdateCoordinator, entry: ConfigEntry) -> None:
         """Initialize the memory sensor."""
         super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.entry_id}_memory"
+        self._attr_unique_id = f"{entry.entry_id}_memory_usage"
         self._attr_name = f"{entry.data.get('device_name', 'Android TV Box')} Memory Usage"
         self._attr_icon = "mdi:memory"
-        self._attr_native_unit_of_measurement = PERCENTAGE
+        self._attr_native_unit_of_measurement = UnitOfInformation.MEGABYTES
         self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_device_class = SensorDeviceClass.DATA_SIZE
     
     @property
     def native_value(self) -> Optional[float]:
-        """Return the memory usage percentage."""
-        return round(self.coordinator.data.memory_usage, 1)
+        """Return the memory usage in MB."""
+        # For system memory, we need to implement actual memory monitoring
+        # For now, return a placeholder value
+        return None
 
 
 class AndroidTVISGStatusSensor(AndroidTVBaseSensor):

@@ -8,7 +8,7 @@
   "requirements": [
     "adb-shell>=0.4.4"
   ],
-  "version": "1.0.4",
+  "version": "1.0.6",
   "iot_class": "local_polling",
   "integration_type": "device",
   "after_dependencies": [],

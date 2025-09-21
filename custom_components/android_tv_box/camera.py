@@ -48,7 +48,6 @@ class AndroidTVScreenshotCamera(CoordinatorEntity[AndroidTVUpdateCoordinator], C
             "manufacturer": self.coordinator.data.device_manufacturer or "Android",
             "model": self.coordinator.data.device_model or "TV Box",
             "sw_version": self.coordinator.data.android_version,
-            "via_device": (DOMAIN, f"{self.coordinator.adb_manager.host}_{self.coordinator.adb_manager.port}"),
         }
     
     @property

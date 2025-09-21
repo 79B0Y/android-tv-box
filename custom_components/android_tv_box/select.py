@@ -41,9 +41,20 @@ class AndroidTVAppSelector(CoordinatorEntity[AndroidTVUpdateCoordinator], Select
         self._attr_name = f"{entry.data.get('device_name', 'Android TV Box')} App Selector"
         self._attr_icon = "mdi:application"
         
-        # Get configured apps
-        self._configured_apps = entry.data.get(CONF_APPS, {})
+        # Get configured apps with defaults
+        from .const import DEFAULT_APPS
+        self._configured_apps = entry.data.get(CONF_APPS, DEFAULT_APPS.copy())
         self._visible_apps = entry.data.get(CONF_VISIBLE_APPS, list(self._configured_apps.keys()))
+        
+        # Ensure we always have at least one option for HomeKit compatibility
+        if not self._visible_apps:
+            self._visible_apps = list(self._configured_apps.keys()) if self._configured_apps else ["None"]
+        
+        # Ensure configured_apps has entries for all visible apps
+        for app in self._visible_apps:
+            if app not in self._configured_apps:
+                self._configured_apps[app] = f"com.example.{app.lower()}"
+        
         self._attr_options = self._visible_apps
     
     @property
@@ -55,7 +66,6 @@ class AndroidTVAppSelector(CoordinatorEntity[AndroidTVUpdateCoordinator], Select
             "manufacturer": self.coordinator.data.device_manufacturer or "Android",
             "model": self.coordinator.data.device_model or "TV Box",
             "sw_version": self.coordinator.data.android_version,
-            "via_device": (DOMAIN, f"{self.coordinator.adb_manager.host}_{self.coordinator.adb_manager.port}"),
         }
     
     @property
@@ -64,12 +74,24 @@ class AndroidTVAppSelector(CoordinatorEntity[AndroidTVUpdateCoordinator], Select
         return self.coordinator.data.is_connected
     
     @property
+    def options(self) -> list:
+        """Return the list of available options."""
+        # Ensure we always return a non-empty list for HomeKit compatibility
+        if not self._attr_options:
+            return ["None"]
+        return self._attr_options
+    
+    @property
     def current_option(self) -> Optional[str]:
         """Return the currently selected option."""
         current_app_name = self.coordinator.data.current_app_name
         if current_app_name and current_app_name in self._visible_apps:
             return current_app_name
-        return None
+        # Return the first option if current app is not in visible list
+        # This ensures HomeKit always has a valid option selected
+        if self._attr_options:
+            return self._attr_options[0]
+        return "None"
     
     @property
     def extra_state_attributes(self) -> Dict[str, Any]:
@@ -83,8 +105,13 @@ class AndroidTVAppSelector(CoordinatorEntity[AndroidTVUpdateCoordinator], Select
     
     async def async_select_option(self, option: str) -> None:
         """Select an app to launch."""
+        # Handle special "None" option
+        if option == "None":
+            _LOGGER.warning("Cannot launch 'None' app - no apps configured")
+            return
+            
         package_name = self._configured_apps.get(option)
-        if package_name:
+        if package_name and package_name != "com.example.none":
             success = await self.coordinator.start_app_with_feedback(package_name)
             if not success:
                 _LOGGER.error("Failed to start app: %s", option)
