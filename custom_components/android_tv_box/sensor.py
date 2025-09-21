@@ -181,8 +181,10 @@ class AndroidTVMemorySensor(AndroidTVBaseSensor):
     @property
     def native_value(self) -> Optional[float]:
         """Return the memory usage in MB."""
-        # For system memory, we need to implement actual memory monitoring
-        # For now, return a placeholder value
+        # Convert the memory_usage (assumed to be in percentage) to MB if we have total memory info
+        # For now, return the raw memory_usage as MB to maintain consistency
+        if self.coordinator.data.memory_usage > 0:
+            return round(self.coordinator.data.memory_usage, 1)
         return None
 
 
