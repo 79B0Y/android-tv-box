@@ -135,19 +135,41 @@ class ADBManager(ADBManagerInterface):
     async def connect(self) -> bool:
         """Connect to Android TV device via ADB."""
         try:
+            self._logger.info("Attempting to connect to %s:%s", self.host, self.port)
+            
             # Connect using adb-shell
             self._device = AdbDeviceTcp(self.host, self.port)
-            await asyncio.wait_for(self._device.connect(rsa_keys=None, auth_timeout_s=ADB_TIMEOUT), timeout=ADB_TIMEOUT)
             
-            # Test connection with simple command
-            result = await self._execute_with_device("shell echo test")
-            if result.success and "test" in result.stdout:
-                self._connected = True
-                self._logger.info("Connected to %s:%s via adb-shell", self.host, self.port)
-                return True
+            # The connect method might be sync, so run it in executor
+            def _connect():
+                self._logger.debug("Executing ADB connect for %s:%s", self.host, self.port)
+                return self._device.connect(rsa_keys=None, auth_timeout_s=ADB_TIMEOUT)
+            
+            # Run the potentially blocking connect in an executor
+            loop = asyncio.get_event_loop()
+            connect_result = await loop.run_in_executor(None, _connect)
+            
+            self._logger.debug("ADB connect result: %s", connect_result)
+            
+            if connect_result:
+                # Test connection with simple command
+                self._logger.debug("Testing connection with echo command")
+                result = await self._execute_with_device("echo test")
+                self._logger.debug("Echo test result: success=%s, stdout='%s'", result.success, result.stdout)
+                
+                if result.success and "test" in result.stdout:
+                    self._connected = True
+                    self._logger.info("Successfully connected to %s:%s via adb-shell", self.host, self.port)
+                    return True
+                else:
+                    self._logger.warning("Connection test failed for %s:%s", self.host, self.port)
+            else:
+                self._logger.warning("ADB connect returned False for %s:%s", self.host, self.port)
                 
         except Exception as e:
             self._logger.error("Failed to connect to %s:%s: %s", self.host, self.port, e)
+            import traceback
+            self._logger.debug("Connection traceback: %s", traceback.format_exc())
             
         self._connected = False
         return False
@@ -156,7 +178,12 @@ class ADBManager(ADBManagerInterface):
         """Disconnect from device."""
         try:
             if self._device:
-                await self._device.close()
+                # The close method might also be sync
+                def _close():
+                    return self._device.close()
+                
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, _close)
                 self._device = None
         except Exception as e:
             self._logger.debug("Error during disconnect: %s", e)
@@ -244,10 +271,16 @@ class ADBManager(ADBManagerInterface):
     async def _execute_with_device(self, command: str) -> ADBCommandResult:
         """Execute command using adb-shell."""
         try:
+            # The shell method might be sync, so run it in executor
+            def _shell():
+                return self._device.shell(command)
+            
+            loop = asyncio.get_event_loop()
             result = await asyncio.wait_for(
-                self._device.shell(command),
+                loop.run_in_executor(None, _shell),
                 timeout=ADB_TIMEOUT
             )
+            
             # adb-shell returns a string, not a tuple
             if isinstance(result, str):
                 return ADBCommandResult(
