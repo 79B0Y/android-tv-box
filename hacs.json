@@ -1,0 +1,9 @@
+{
+  "name": "Android TV Box Integration",
+  "content_in_root": false,
+  "filename": "android_tv_box.zip",
+  "render_readme": true,
+  "domains": ["media_player", "switch", "camera", "sensor", "button", "number", "select"],
+  "iot_class": "Local Polling",
+  "homeassistant": "2023.1.0"
+}
