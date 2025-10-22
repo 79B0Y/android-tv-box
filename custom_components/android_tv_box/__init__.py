@@ -122,7 +122,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         # Clean up coordinator and ADB manager
         data = hass.data[DOMAIN].pop(entry.entry_id)
-        coordinator = data["coordinator"]
         adb_manager = data["adb_manager"]
         
         # Disconnect ADB
@@ -133,8 +132,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except Exception as e:
             _LOGGER.warning("Unexpected error disconnecting ADB: %s", e)
         
-        # Stop coordinator
-        coordinator.async_stop()
+        # Note: DataUpdateCoordinator doesn't need explicit stopping
     
     return unload_ok
 
