@@ -1,6 +1,7 @@
 """Data update coordinator for Android TV Box Integration."""
 import asyncio
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -338,6 +339,36 @@ class AndroidTVUpdateCoordinator(DataUpdateCoordinator):
         brightness = await self.adb_manager.get_brightness()
         if brightness is not None:
             self.data.update_brightness_state(brightness)
+        
+        # System CPU and Memory usage
+        try:
+            # Get overall system CPU usage
+            cpu_result = await self.adb_manager.execute_command("top -n 1 -b | grep 'CPU:' | head -1")
+            if cpu_result.success and cpu_result.stdout:
+                # Parse CPU usage from top output
+                # Example: "CPU:  12% usr   5% sys   0% nic  82% idle"
+                match = re.search(r'(\d+)%\s+usr', cpu_result.stdout)
+                if match:
+                    usr_cpu = int(match.group(1))
+                    sys_match = re.search(r'(\d+)%\s+sys', cpu_result.stdout)
+                    sys_cpu = int(sys_match.group(1)) if sys_match else 0
+                    self.data.cpu_usage = float(usr_cpu + sys_cpu)
+        except Exception as e:
+            _LOGGER.debug("Failed to get CPU usage: %s", e)
+        
+        try:
+            # Get overall memory usage
+            mem_result = await self.adb_manager.execute_command("dumpsys meminfo | grep 'Total RAM' | head -1")
+            if mem_result.success and mem_result.stdout:
+                # Parse memory info
+                # Example: "Total RAM: 1,234,567 kB (status moderate)"
+                match = re.search(r'([\d,]+)\s*kB', mem_result.stdout)
+                if match:
+                    total_kb = int(match.group(1).replace(',', ''))
+                    total_mb = total_kb / 1024
+                    self.data.memory_usage = total_mb
+        except Exception as e:
+            _LOGGER.debug("Failed to get memory usage: %s", e)
         
         self._last_high_frequency_update = current_time
     
