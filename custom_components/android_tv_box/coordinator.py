@@ -244,9 +244,15 @@ class AndroidTVUpdateCoordinator(DataUpdateCoordinator):
             await self._update_basic_status(current_time)
             
             if self._should_update_high_frequency(current_time):
+                _LOGGER.debug("Triggering high-frequency update")
                 await self._update_high_frequency_items(current_time)
+            else:
+                time_since_last = current_time - self._last_high_frequency_update
+                _LOGGER.debug("Skipping high-frequency update (last update: %s seconds ago, need: 30s)", 
+                             time_since_last.total_seconds())
             
             if self._should_update_low_frequency(current_time):
+                _LOGGER.debug("Triggering low-frequency update")
                 await self._update_low_frequency_items(current_time)
             
             if self._isg_monitoring_enabled and self._should_update_isg(current_time):
@@ -330,38 +336,52 @@ class AndroidTVUpdateCoordinator(DataUpdateCoordinator):
     
     async def _update_high_frequency_items(self, current_time: datetime) -> None:
         """Update high-frequency monitoring items."""
+        _LOGGER.debug("Updating high-frequency items...")
+        
         # Current activity
         current_activity = await self.adb_manager.get_current_activity()
         if current_activity:
             self.data.update_app_from_output(current_activity)
+            _LOGGER.debug("Current activity: %s", current_activity)
         
         # Brightness
         brightness = await self.adb_manager.get_brightness()
         if brightness is not None:
             self.data.update_brightness_state(brightness)
+            _LOGGER.debug("Brightness: %s", brightness)
         
         # System CPU and Memory usage
         try:
             # Get overall system CPU usage from top
+            _LOGGER.debug("Executing CPU command...")
             cpu_result = await self.adb_manager.execute_command("top -n 1 | head -5")
+            _LOGGER.debug("CPU command result: success=%s, stdout_len=%s", 
+                         cpu_result.success, len(cpu_result.stdout) if cpu_result.stdout else 0)
             if cpu_result.success and cpu_result.stdout:
                 # Parse CPU usage from top output
                 # Example: "400%cpu 171%user  16%nice 308%sys 118%idle"
                 for line in cpu_result.stdout.split('\n'):
                     if '%cpu' in line.lower():
+                        _LOGGER.debug("Found CPU line: %s", line[:80])
                         # Extract total cpu percentage (before "cpu" keyword)
                         match = re.search(r'(\d+)%cpu', line)
                         if match:
                             total_cpu = int(match.group(1))
                             # Convert from total (e.g., 400% on 4 cores) to average %
                             self.data.cpu_usage = float(total_cpu) / 4.0  # Assuming 4 cores, adjust if needed
+                            _LOGGER.debug("CPU usage set to: %.1f%%", self.data.cpu_usage)
                             break
+                else:
+                    _LOGGER.debug("No CPU line found in output")
         except Exception as e:
-            _LOGGER.debug("Failed to get CPU usage: %s", e)
+            _LOGGER.warning("Failed to get CPU usage: %s", e)
         
         try:
             # Get overall memory usage from /proc/meminfo
+            _LOGGER.debug("Executing memory command...")
             mem_result = await self.adb_manager.execute_command("cat /proc/meminfo | head -3")
+            _LOGGER.debug("Memory command result: success=%s, stdout_len=%s",
+                         mem_result.success, len(mem_result.stdout) if mem_result.stdout else 0)
             if mem_result.success and mem_result.stdout:
                 # Parse memory info
                 # Example: "MemTotal:        4006100 kB"
@@ -374,16 +394,19 @@ class AndroidTVUpdateCoordinator(DataUpdateCoordinator):
                         match = re.search(r'(\d+)\s*kB', line)
                         if match:
                             total_mem = int(match.group(1)) / 1024  # Convert to MB
+                            _LOGGER.debug("Total memory: %.2f MB", total_mem)
                     elif 'MemAvailable:' in line:
                         match = re.search(r'(\d+)\s*kB', line)
                         if match:
                             available_mem = int(match.group(1)) / 1024
                             used_mem = total_mem - available_mem
+                            _LOGGER.debug("Available: %.2f MB, Used: %.2f MB", available_mem, used_mem)
                 
                 if total_mem > 0:
                     self.data.memory_usage = used_mem
+                    _LOGGER.debug("Memory usage set to: %.2f MB", self.data.memory_usage)
         except Exception as e:
-            _LOGGER.debug("Failed to get memory usage: %s", e)
+            _LOGGER.warning("Failed to get memory usage: %s", e)
         
         self._last_high_frequency_update = current_time
     
