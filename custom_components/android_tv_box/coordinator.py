@@ -342,31 +342,46 @@ class AndroidTVUpdateCoordinator(DataUpdateCoordinator):
         
         # System CPU and Memory usage
         try:
-            # Get overall system CPU usage
-            cpu_result = await self.adb_manager.execute_command("top -n 1 -b | grep 'CPU:' | head -1")
+            # Get overall system CPU usage from top
+            cpu_result = await self.adb_manager.execute_command("top -n 1 | head -5")
             if cpu_result.success and cpu_result.stdout:
                 # Parse CPU usage from top output
-                # Example: "CPU:  12% usr   5% sys   0% nic  82% idle"
-                match = re.search(r'(\d+)%\s+usr', cpu_result.stdout)
-                if match:
-                    usr_cpu = int(match.group(1))
-                    sys_match = re.search(r'(\d+)%\s+sys', cpu_result.stdout)
-                    sys_cpu = int(sys_match.group(1)) if sys_match else 0
-                    self.data.cpu_usage = float(usr_cpu + sys_cpu)
+                # Example: "400%cpu 171%user  16%nice 308%sys 118%idle"
+                for line in cpu_result.stdout.split('\n'):
+                    if '%cpu' in line.lower():
+                        # Extract total cpu percentage (before "cpu" keyword)
+                        match = re.search(r'(\d+)%cpu', line)
+                        if match:
+                            total_cpu = int(match.group(1))
+                            # Convert from total (e.g., 400% on 4 cores) to average %
+                            self.data.cpu_usage = float(total_cpu) / 4.0  # Assuming 4 cores, adjust if needed
+                            break
         except Exception as e:
             _LOGGER.debug("Failed to get CPU usage: %s", e)
         
         try:
-            # Get overall memory usage
-            mem_result = await self.adb_manager.execute_command("dumpsys meminfo | grep 'Total RAM' | head -1")
+            # Get overall memory usage from /proc/meminfo
+            mem_result = await self.adb_manager.execute_command("cat /proc/meminfo | head -3")
             if mem_result.success and mem_result.stdout:
                 # Parse memory info
-                # Example: "Total RAM: 1,234,567 kB (status moderate)"
-                match = re.search(r'([\d,]+)\s*kB', mem_result.stdout)
-                if match:
-                    total_kb = int(match.group(1).replace(',', ''))
-                    total_mb = total_kb / 1024
-                    self.data.memory_usage = total_mb
+                # Example: "MemTotal:        4006100 kB"
+                #          "MemFree:          270864 kB"
+                #          "MemAvailable:    1075888 kB"
+                total_mem = 0
+                used_mem = 0
+                for line in mem_result.stdout.split('\n'):
+                    if 'MemTotal:' in line:
+                        match = re.search(r'(\d+)\s*kB', line)
+                        if match:
+                            total_mem = int(match.group(1)) / 1024  # Convert to MB
+                    elif 'MemAvailable:' in line:
+                        match = re.search(r'(\d+)\s*kB', line)
+                        if match:
+                            available_mem = int(match.group(1)) / 1024
+                            used_mem = total_mem - available_mem
+                
+                if total_mem > 0:
+                    self.data.memory_usage = used_mem
         except Exception as e:
             _LOGGER.debug("Failed to get memory usage: %s", e)
         
