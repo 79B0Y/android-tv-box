@@ -39,7 +39,7 @@ DEFAULT_ISG_CPU_THRESHOLD = 90
 
 # Update intervals
 BASE_UPDATE_INTERVAL = timedelta(seconds=60)
-HIGH_FREQUENCY_INTERVAL = timedelta(minutes=5)
+HIGH_FREQUENCY_INTERVAL = timedelta(seconds=30)  # CPU, memory, brightness, current app - 30 seconds
 LOW_FREQUENCY_INTERVAL = timedelta(minutes=15)
 ISG_CHECK_INTERVAL = timedelta(minutes=2)
 
