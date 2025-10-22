@@ -118,12 +118,17 @@ class AndroidTVState:
         self.wakefulness = wakefulness
         self.screen_on = screen_on
         
-        if wakefulness == "Awake" and screen_on:
+        # Device is "on" if wakefulness is Awake (regardless of screen_on)
+        # Some devices report screen_on=False even when Awake
+        if wakefulness == "Awake":
             self.power_state = "on"
         elif wakefulness == "Asleep":
             self.power_state = "off"
-        else:
+        elif wakefulness == "Dreaming":
             self.power_state = "standby"
+        else:
+            # Unknown state - check screen_on as fallback
+            self.power_state = "on" if screen_on else "off"
     
     def update_volume_state(self, current: int, max_vol: int, is_muted: bool) -> None:
         """Update volume state."""

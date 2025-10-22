@@ -151,7 +151,7 @@ ISG_CONTROL_COMMANDS = {
 SET_COMMANDS = {
     "set_volume": "service call audio 12 i32 3 i32 {level} i32 0",
     "set_brightness": "settings put system screen_brightness {level}",
-    "start_app": "monkey -p {package} -c android.intent.category.LAUNCHER 1",
+    "start_app": "am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f 0x10200000 {package}",
     "cast_media": "am start -a android.intent.action.VIEW -d '{url}' --es android.intent.extra.REFERRER_NAME 'Home Assistant'",
     "cast_youtube": "am start -a android.intent.action.VIEW -d 'https://www.youtube.com/watch?v={video_id}' -n com.google.android.youtube/.WatchWhileActivity",
     "cast_netflix": "am start -a android.intent.action.VIEW -d 'https://www.netflix.com/watch/{video_id}' -n com.netflix.mediaclient/.ui.launch.UIWebViewActivity",
@@ -179,7 +179,7 @@ IMMEDIATE_FEEDBACK_TIMINGS = {
 
 # Default apps configuration
 DEFAULT_APPS = {
-    "YouTube": "com.google.android.youtube",
+    "YouTube": "com.google.android.youtube.tv",  # TV version
     "Netflix": "com.netflix.mediaclient",
     "Spotify": "com.spotify.music",
     "iSG": "com.linknlink.app.device.isg",
