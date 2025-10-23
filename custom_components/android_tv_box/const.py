@@ -101,6 +101,7 @@ ADB_COMMANDS = {
     # Power control
     "power_on": "input keyevent {keycode}".format(keycode=KEYCODE_WAKEUP),
     "power_off": "input keyevent {keycode}".format(keycode=KEYCODE_SLEEP),
+    "power_toggle": "input keyevent {keycode}".format(keycode=KEYCODE_POWER),
 
     # Navigation
     "nav_up": "input keyevent {keycode}".format(keycode=KEYCODE_DPAD_UP),
@@ -118,7 +119,8 @@ STATE_COMMANDS = {
     # Raw output; parse in Python for better compatibility across ROMs
     "media_state": "dumpsys media_session",
     "volume_level": "cmd media_session volume --stream 3 --get",
-    "power_state": "dumpsys power | grep -E '(mWakefulness|mScreenOn)'",
+    # Read full power dump for robust parsing across ROMs
+    "power_state": "dumpsys power",
     "wifi_state": "settings get global wifi_on",
     "wifi_ssid": "dumpsys wifi | grep 'SSID:' | head -1",
     "ip_address": "ip addr show wlan0 | grep 'inet '",
@@ -153,7 +155,10 @@ ISG_CONTROL_COMMANDS = {
 
 # Set commands
 SET_COMMANDS = {
-    "set_volume": "service call audio 12 i32 3 i32 {level} i32 0",
+    # Prefer cmd media_session for modern Android
+    "set_volume": "cmd media_session volume --stream 3 --set {level}",
+    # Fallback for some ROMs
+    "set_volume_alt": "media volume --stream 3 --set {level}",
     "set_brightness": "settings put system screen_brightness {level}",
     # Use MAIN/LAUNCHER with flags; caller passes package as '-p <pkg>' or full component
     "start_app": "am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f 0x10200000 -p {package}",

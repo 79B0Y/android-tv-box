@@ -1,5 +1,6 @@
 """Data update coordinator for Android TV Box Integration."""
 import asyncio
+import time
 import logging
 import re
 from dataclasses import dataclass, field
@@ -118,17 +119,17 @@ class AndroidTVState:
         self.wakefulness = wakefulness
         self.screen_on = screen_on
         
-        # Device is "on" if wakefulness is Awake (regardless of screen_on)
-        # Some devices report screen_on=False even when Awake
-        if wakefulness == "Awake":
-            self.power_state = "on"
-        elif wakefulness == "Asleep":
+        # Prioritize explicit sleep
+        if wakefulness == "Asleep":
             self.power_state = "off"
+        # If screen is on, consider device on regardless of wakefulness wording
+        elif screen_on:
+            self.power_state = "on"
         elif wakefulness == "Dreaming":
             self.power_state = "standby"
         else:
-            # Unknown state - check screen_on as fallback
-            self.power_state = "on" if screen_on else "off"
+            # Screen is off -> treat as off for TV box use-cases
+            self.power_state = "off"
     
     def update_volume_state(self, current: int, max_vol: int, is_muted: bool) -> None:
         """Update volume state."""
@@ -347,7 +348,11 @@ class AndroidTVUpdateCoordinator(DataUpdateCoordinator):
         """Update basic device status."""
         # Power state
         wakefulness, screen_on = await self.adb_manager.get_power_state()
-        self.data.update_power_state(wakefulness, screen_on)
+        # If read failed (Unknown + screen_off), keep previous state to avoid false flip
+        if wakefulness == "Unknown" and not screen_on:
+            _LOGGER.debug("Skipping power_state update due to transient Unknown reading")
+        else:
+            self.data.update_power_state(wakefulness, screen_on)
         
         # Media state
         self.data.media_state = await self.adb_manager.get_media_state()
@@ -634,11 +639,23 @@ class AndroidTVUpdateCoordinator(DataUpdateCoordinator):
                 wait_time = 2.0  # Power off needs more time to complete
 
             if success:
-                await asyncio.sleep(wait_time)
-
-                # Query power state
-                wakefulness, screen_on = await self.adb_manager.get_power_state()
-                self.data.update_power_state(wakefulness, screen_on)
+                # Poll up to 10s for real device state, stop early on success
+                target = "on" if turn_on else "off"
+                deadline = time.monotonic() + 10.0
+                last_state = None
+                # small initial settle
+                await asyncio.sleep(max(wait_time, 0.5))
+                while time.monotonic() < deadline:
+                    wakefulness, screen_on = await self.adb_manager.get_power_state()
+                    # Avoid overwriting with transient Unknown
+                    if not (wakefulness == "Unknown" and not screen_on):
+                        self.data.update_power_state(wakefulness, screen_on)
+                    last_state = self.data.power_state
+                    if last_state == target:
+                        break
+                    _LOGGER.debug("Power state not yet %s (current: %s), waiting...", target, last_state)
+                    await asyncio.sleep(0.7)
+                # Report whatever we actually observed
                 self.async_update_listeners()
 
             return success
