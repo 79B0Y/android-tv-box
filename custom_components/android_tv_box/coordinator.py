@@ -1,6 +1,5 @@
 """Data update coordinator for Android TV Box Integration."""
 import asyncio
-import time
 import logging
 import re
 from dataclasses import dataclass, field
@@ -26,6 +25,7 @@ from .const import (
     MEDIA_STATE_IDLE,
     OFFLINE_SKIP_THRESHOLD_MINUTES,
     POWER_STATE_OFF,
+    POWER_STATE_ON,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -119,17 +119,17 @@ class AndroidTVState:
         self.wakefulness = wakefulness
         self.screen_on = screen_on
         
-        # Prioritize explicit sleep
-        if wakefulness == "Asleep":
-            self.power_state = "off"
-        # If screen is on, consider device on regardless of wakefulness wording
-        elif screen_on:
+        # Device is "on" if wakefulness is Awake (regardless of screen_on)
+        # Some devices report screen_on=False even when Awake
+        if wakefulness == "Awake":
             self.power_state = "on"
+        elif wakefulness == "Asleep":
+            self.power_state = "off"
         elif wakefulness == "Dreaming":
             self.power_state = "standby"
         else:
-            # Screen is off -> treat as off for TV box use-cases
-            self.power_state = "off"
+            # Unknown state - check screen_on as fallback
+            self.power_state = "on" if screen_on else "off"
     
     def update_volume_state(self, current: int, max_vol: int, is_muted: bool) -> None:
         """Update volume state."""
@@ -348,11 +348,7 @@ class AndroidTVUpdateCoordinator(DataUpdateCoordinator):
         """Update basic device status."""
         # Power state
         wakefulness, screen_on = await self.adb_manager.get_power_state()
-        # If read failed (Unknown + screen_off), keep previous state to avoid false flip
-        if wakefulness == "Unknown" and not screen_on:
-            _LOGGER.debug("Skipping power_state update due to transient Unknown reading")
-        else:
-            self.data.update_power_state(wakefulness, screen_on)
+        self.data.update_power_state(wakefulness, screen_on)
         
         # Media state
         self.data.media_state = await self.adb_manager.get_media_state()
@@ -629,33 +625,56 @@ class AndroidTVUpdateCoordinator(DataUpdateCoordinator):
             return False
     
     async def power_control_with_feedback(self, turn_on: bool) -> bool:
-        """Control power with immediate state feedback."""
+        """Control power with immediate state feedback and verification."""
         try:
             if turn_on:
                 success = await self.adb_manager.power_on()
-                wait_time = 1.0  # Power on is quick
+                wait_time = 2.0  # Increased: Power on needs time to complete
+                expected_power_state = POWER_STATE_ON
             else:
                 success = await self.adb_manager.power_off()
-                wait_time = 2.0  # Power off needs more time to complete
+                wait_time = 3.5  # Increased: Power off + CEC需要更多时间
+                expected_power_state = POWER_STATE_OFF
 
             if success:
-                # Poll up to 10s for real device state, stop early on success
-                target = "on" if turn_on else "off"
-                deadline = time.monotonic() + 10.0
-                last_state = None
-                # small initial settle
-                await asyncio.sleep(max(wait_time, 0.5))
-                while time.monotonic() < deadline:
+                # Initial wait for power state to change
+                await asyncio.sleep(wait_time)
+
+                # Query power state with retry verification
+                max_retries = 3
+                state_verified = False
+
+                for retry in range(max_retries):
                     wakefulness, screen_on = await self.adb_manager.get_power_state()
-                    # Avoid overwriting with transient Unknown
-                    if not (wakefulness == "Unknown" and not screen_on):
-                        self.data.update_power_state(wakefulness, screen_on)
-                    last_state = self.data.power_state
-                    if last_state == target:
+                    self.data.update_power_state(wakefulness, screen_on)
+
+                    # Verify state changed as expected
+                    if self.data.power_state == expected_power_state:
+                        state_verified = True
+                        _LOGGER.debug(
+                            "Power state verified on attempt %d: %s",
+                            retry + 1,
+                            self.data.power_state
+                        )
                         break
-                    _LOGGER.debug("Power state not yet %s (current: %s), waiting...", target, last_state)
-                    await asyncio.sleep(0.7)
-                # Report whatever we actually observed
+
+                    if retry < max_retries - 1:
+                        # State not yet changed, wait a bit more and retry
+                        _LOGGER.debug(
+                            "Power state not yet changed (attempt %d), waiting...",
+                            retry + 1
+                        )
+                        await asyncio.sleep(0.5)
+
+                if not state_verified:
+                    _LOGGER.warning(
+                        "Power state may not have changed as expected. "
+                        "Target: %s, Current: %s",
+                        expected_power_state,
+                        self.data.power_state
+                    )
+
+                # Update HA listeners with the latest state
                 self.async_update_listeners()
 
             return success
@@ -748,7 +767,76 @@ class AndroidTVUpdateCoordinator(DataUpdateCoordinator):
         except Exception as e:
             _LOGGER.error("Error taking screenshot: %s", e)
             return False
-    
+
+    async def optimize_resources_with_feedback(self) -> bool:
+        """Optimize CPU and memory resources with immediate feedback.
+
+        This method:
+        1. Stops high-resource apps (Spotify, Chrome, Netflix, YouTube)
+        2. Clears system cache
+        3. Triggers garbage collection
+        4. Updates system resource stats
+        """
+        try:
+            _LOGGER.info("Starting resource optimization...")
+
+            # List of apps to stop (package names)
+            apps_to_stop = [
+                "com.spotify.music",          # Spotify
+                "com.android.chrome",         # Chrome
+                "com.netflix.mediaclient",    # Netflix
+                "com.google.android.youtube.tv",  # YouTube TV
+            ]
+
+            stopped_count = 0
+
+            # Stop high-resource apps
+            for app_package in apps_to_stop:
+                try:
+                    result = await self.adb_manager.execute_command(
+                        f"am force-stop {app_package}",
+                        use_cache=False
+                    )
+                    if result.success:
+                        stopped_count += 1
+                        _LOGGER.debug("Stopped app: %s", app_package)
+                except Exception as e:
+                    _LOGGER.warning("Failed to stop %s: %s", app_package, e)
+
+            # Clear system cache
+            try:
+                await self.adb_manager.execute_command("sync", use_cache=False)
+                _LOGGER.debug("System cache synced")
+            except Exception as e:
+                _LOGGER.warning("Failed to sync cache: %s", e)
+
+            # Trigger garbage collection
+            try:
+                await self.adb_manager.execute_command(
+                    "am send-trim-memory 15",
+                    use_cache=False
+                )
+                _LOGGER.debug("Garbage collection triggered")
+            except Exception as e:
+                _LOGGER.warning("Failed to trigger GC: %s", e)
+
+            # Wait for cleanup to take effect
+            await asyncio.sleep(2.0)
+
+            # Force immediate data refresh to update resource stats
+            await self.async_request_refresh()
+
+            _LOGGER.info(
+                "Resource optimization completed. Stopped %d apps.",
+                stopped_count
+            )
+
+            return True
+
+        except Exception as e:
+            _LOGGER.error("Error during resource optimization: %s", e)
+            return False
+
     def get_app_package(self, app_name: str) -> Optional[str]:
         """Get package name for app."""
         return self.data.configured_apps.get(app_name)

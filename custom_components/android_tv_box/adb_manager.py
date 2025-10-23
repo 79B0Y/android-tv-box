@@ -446,15 +446,9 @@ class ADBManager(ADBManagerInterface):
     
     async def set_volume(self, level: int) -> bool:
         """Set volume to specific level."""
-        # Try primary command
-        cmd = SET_COMMANDS["set_volume"].format(level=level)
-        res = await self.execute_command(cmd, use_cache=False)
-        if not res.success:
-            # Fallback to alt command
-            alt = SET_COMMANDS.get("set_volume_alt")
-            if alt:
-                res = await self.execute_command(alt.format(level=level), use_cache=False)
-        return res.success
+        command = SET_COMMANDS["set_volume"].format(level=level)
+        result = await self.execute_command(command, use_cache=False)
+        return result.success
     
     async def get_volume_state(self) -> Tuple[int, int, bool]:
         """Get volume state (current, max, is_muted) with accurate mute detection."""
@@ -499,14 +493,17 @@ class ADBManager(ADBManagerInterface):
         # Send WAKEUP first
         await self.execute_command(ADB_COMMANDS["power_on"], use_cache=False)
         # Poll and fallback to POWER toggle if still not awake
-        for _ in range(4):
-            await asyncio.sleep(0.7)
+        for _ in range(3):
+            await asyncio.sleep(0.6)
             wakefulness, _ = await self.get_power_state()
             if wakefulness == "Awake":
                 return True
             # Try power toggle to wake some ROMs
             await self.execute_command(ADB_COMMANDS.get("power_toggle", ""), use_cache=False)
-        return False
+        # Last resort: press HOME to bring device interactive
+        await self.execute_command(ADB_COMMANDS.get("nav_home", ""), use_cache=False)
+        wakefulness, _ = await self.get_power_state()
+        return wakefulness == "Awake"
     
     async def power_off(self) -> bool:
         """Put device to sleep."""
@@ -521,22 +518,20 @@ class ADBManager(ADBManagerInterface):
         # Disable cache to avoid stale power state right after toggling
         result = await self.execute_command(STATE_COMMANDS["power_state"], use_cache=False)
         if result.success and result.stdout:
-            txt = result.stdout
-            # Normalize and search
             wakefulness = "Unknown"
             screen_on = False
-            # Common patterns across ROMs
-            if "mWakefulness=Awake" in txt or "mWakefulness= WAKING" in txt or "mWakefulness= AWAKE" in txt:
-                wakefulness = "Awake"
-            elif "mWakefulness=Asleep" in txt or "mWakefulness= SLEEP" in txt:
-                wakefulness = "Asleep"
-            elif "mWakefulness=Dreaming" in txt:
-                wakefulness = "Dreaming"
-            # Screen state variants
-            if "mScreenOn=true" in txt or "mScreenState=ON" in txt or "mDisplayPowerState=ON" in txt:
-                screen_on = True
-            elif "mScreenOn=false" in txt or "mScreenState=OFF" in txt:
-                screen_on = False
+            
+            for line in result.stdout.split('\n'):
+                if "mWakefulness=" in line:
+                    if "Awake" in line:
+                        wakefulness = "Awake"
+                    elif "Asleep" in line:
+                        wakefulness = "Asleep"
+                    elif "Dreaming" in line:
+                        wakefulness = "Dreaming"
+                elif "mScreenOn=" in line:
+                    screen_on = "true" in line
+            
             return wakefulness, screen_on
         return "Unknown", False
     

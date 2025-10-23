@@ -36,6 +36,7 @@ async def async_setup_entry(
         AndroidTVRestartISGButton(coordinator, entry),
         AndroidTVClearISGCacheButton(coordinator, entry),
         AndroidTVISGHealthCheckButton(coordinator, entry),
+        AndroidTVOptimizeResourcesButton(coordinator, entry),
     ]
 
     async_add_entities(entities, True)
@@ -146,14 +147,14 @@ class AndroidTVClearISGCacheButton(AndroidTVBaseButton):
 
 class AndroidTVISGHealthCheckButton(AndroidTVBaseButton):
     """Button to perform ISG health check."""
-    
+
     def __init__(self, coordinator: AndroidTVUpdateCoordinator, entry: ConfigEntry) -> None:
         """Initialize the ISG health check button."""
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_isg_health_check"
         self._attr_name = f"{entry.data.get('device_name', 'Android TV Box')} ISG Health Check"
         self._attr_icon = "mdi:heart-pulse"
-    
+
     async def async_press(self) -> None:
         """Perform ISG health check."""
         try:
@@ -163,3 +164,23 @@ class AndroidTVISGHealthCheckButton(AndroidTVBaseButton):
             _LOGGER.info("ISG health check completed: %s", health_data.get("health_status"))
         except Exception as e:
             _LOGGER.error("Failed to perform ISG health check: %s", e)
+
+
+class AndroidTVOptimizeResourcesButton(AndroidTVBaseButton):
+    """Button to optimize CPU and memory resources."""
+
+    def __init__(self, coordinator: AndroidTVUpdateCoordinator, entry: ConfigEntry) -> None:
+        """Initialize the optimize resources button."""
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_optimize_resources"
+        self._attr_name = f"{entry.data.get('device_name', 'Android TV Box')} Optimize Resources"
+        self._attr_icon = "mdi:broom"
+
+    async def async_press(self) -> None:
+        """Optimize CPU and memory resources."""
+        _LOGGER.info("Optimize resources button pressed")
+        success = await self.coordinator.optimize_resources_with_feedback()
+        if success:
+            _LOGGER.info("Resource optimization completed successfully")
+        else:
+            _LOGGER.error("Failed to optimize resources")
