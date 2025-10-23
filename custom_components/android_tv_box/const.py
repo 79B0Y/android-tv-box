@@ -115,27 +115,31 @@ ADB_COMMANDS = {
 
 # State query commands
 STATE_COMMANDS = {
-    "media_state": "dumpsys media_session | awk '/Sessions Stack/ {inStack=1} inStack && /package=/ {pkg=$0} /active=true/ {active=1} /state=PlaybackState/ && active { if (match($0, /state=([A-Z_]+)\\([0-9]+\\)/, m)) { print m[1]; exit } }'",
+    # Raw output; parse in Python for better compatibility across ROMs
+    "media_state": "dumpsys media_session",
     "volume_level": "cmd media_session volume --stream 3 --get",
     "power_state": "dumpsys power | grep -E '(mWakefulness|mScreenOn)'",
     "wifi_state": "settings get global wifi_on",
     "wifi_ssid": "dumpsys wifi | grep 'SSID:' | head -1",
     "ip_address": "ip addr show wlan0 | grep 'inet '",
     "current_app": "dumpsys activity activities | grep 'ActivityRecord' | head -1",
-    "current_activity": "dumpsys activity top | grep ACTIVITY",
+    "current_activity": "dumpsys activity activities | grep topResumedActivity",
     "installed_apps": "pm list packages -3",
     "brightness": "settings get system screen_brightness",
     "device_info": "getprop",
     "screenshot": "screencap -p {path}",
+    # Audio info for accurate mute detection
+    "audio_info": "dumpsys audio",
 }
 
 # ISG monitoring commands
 ISG_COMMANDS = {
-    "process_status": "ps | grep com.linknlink.app.device.isg",
-    "memory_usage": "dumpsys meminfo com.linknlink.app.device.isg | head -20",
-    "cpu_usage": "top -p $(pidof com.linknlink.app.device.isg) -n 1",
+    # Use pidof to reliably detect process on modern Android
+    "process_status": "pidof com.linknlink.app.device.isg",
+    "memory_usage": "dumpsys meminfo com.linknlink.app.device.isg | head -50",
+    "cpu_usage": "PID=$(pidof com.linknlink.app.device.isg); if [ -n \"$PID\" ]; then top -n 1 -p $PID; else echo 'NO_PID'; fi",
     "app_logs": "logcat -s ISG:* -v time -t 50",
-    "crash_logs": "logcat -b crash -v time -t 25",
+    "crash_logs": "logcat -b crash -v time -t 50",
     "anr_logs": "logcat -s ActivityManager:* -v time -t 10 | grep ANR",
 }
 
@@ -151,19 +155,53 @@ ISG_CONTROL_COMMANDS = {
 SET_COMMANDS = {
     "set_volume": "service call audio 12 i32 3 i32 {level} i32 0",
     "set_brightness": "settings put system screen_brightness {level}",
-    "start_app": "am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f 0x10200000 {package}",
+    # Use MAIN/LAUNCHER with flags; caller passes package as '-p <pkg>' or full component
+    "start_app": "am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -f 0x10200000 -p {package}",
+    # Generic URL cast as a fallback
     "cast_media": "am start -a android.intent.action.VIEW -d '{url}' --es android.intent.extra.REFERRER_NAME 'Home Assistant'",
-    "cast_youtube": "am start -a android.intent.action.VIEW -d 'https://www.youtube.com/watch?v={video_id}' -n com.google.android.youtube/.WatchWhileActivity",
-    "cast_netflix": "am start -a android.intent.action.VIEW -d 'https://www.netflix.com/watch/{video_id}' -n com.netflix.mediaclient/.ui.launch.UIWebViewActivity",
-    "cast_spotify": "am start -a android.intent.action.VIEW -d 'spotify:track:{track_id}' -n com.spotify.music/.MainActivity",
+}
+
+# TV-first cast intent templates (tried in order). We use '-p <package>' so we don't need exact Activity.
+CAST_INTENTS = {
+    "youtube": [
+        # YouTube TV preferred
+        "am start -a android.intent.action.VIEW -d 'https://www.youtube.com/watch?v={video_id}' -p com.google.android.youtube.tv",
+        "am start -a android.intent.action.VIEW -d 'vnd.youtube:{video_id}' -p com.google.android.youtube.tv",
+        # Fallback to phone/tablet YouTube if TV not present
+        "am start -a android.intent.action.VIEW -d 'https://www.youtube.com/watch?v={video_id}' -p com.google.android.youtube",
+    ],
+    "netflix": [
+        # Netflix for Android TV package
+        "am start -a android.intent.action.VIEW -d 'nflx://www.netflix.com/watch/{video_id}' -p com.netflix.ninja",
+        "am start -a android.intent.action.VIEW -d 'https://www.netflix.com/watch/{video_id}' -p com.netflix.ninja",
+        # Fallback to mobile package
+        "am start -a android.intent.action.VIEW -d 'https://www.netflix.com/watch/{video_id}' -p com.netflix.mediaclient",
+    ],
+    "spotify": [
+        # Spotify Android TV
+        "am start -a android.intent.action.VIEW -d 'spotify:track:{track_id}' -p com.spotify.tv.android",
+        # Fallback to mobile
+        "am start -a android.intent.action.VIEW -d 'spotify:track:{track_id}' -p com.spotify.music",
+    ],
+    "url": [
+        # Let system choose capable app
+        "am start -a android.intent.action.VIEW -d '{url}'",
+    ],
+}
+
+# Expected packages for cast verification
+CAST_EXPECTED_PACKAGES = {
+    "youtube": ["com.google.android.youtube.tv", "com.google.android.youtube"],
+    "netflix": ["com.netflix.ninja", "com.netflix.mediaclient"],
+    "spotify": ["com.spotify.tv.android", "com.spotify.music"],
 }
 
 # Wait times for immediate feedback (in seconds)
 IMMEDIATE_FEEDBACK_TIMINGS = {
     "volume": 0.3,
     "mute": 0.3,
-    "media_play": 0.5,
-    "media_pause": 0.5,
+    "media_play": 1.8,
+    "media_pause": 0.8,
     "media_stop": 0.8,
     "power_on": 1.0,
     "power_off": 1.0,

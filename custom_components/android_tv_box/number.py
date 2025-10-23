@@ -7,7 +7,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.helpers.entity_registry import async_get as er_async_get
 
 from .const import DOMAIN
 from .coordinator import AndroidTVUpdateCoordinator
@@ -23,14 +22,6 @@ async def async_setup_entry(
     """Set up Android TV Box number entities."""
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator = data["coordinator"]
-    
-    # Deduplicate
-    er = er_async_get(hass)
-    unique_id = f"{entry.entry_id}_brightness_control"
-    existing = er.async_get_entity_id("number", DOMAIN, unique_id)
-    if existing:
-        _LOGGER.debug("Number already exists: %s - skipping duplicate", existing)
-        return
 
     async_add_entities([AndroidTVBrightnessControl(coordinator, entry)], True)
 

@@ -7,7 +7,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.helpers.entity_registry import async_get as er_async_get
 
 from .const import DOMAIN
 from .coordinator import AndroidTVUpdateCoordinator
@@ -23,33 +22,23 @@ async def async_setup_entry(
     """Set up Android TV Box buttons."""
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator = data["coordinator"]
-    
-    # Deduplicate per unique_id
-    er = er_async_get(hass)
-    planned = [
-        ("button", f"{entry.entry_id}_nav_up", lambda: AndroidTVNavigationButton(coordinator, entry, "up", "Navigate Up", "mdi:arrow-up")),
-        ("button", f"{entry.entry_id}_nav_down", lambda: AndroidTVNavigationButton(coordinator, entry, "down", "Navigate Down", "mdi:arrow-down")),
-        ("button", f"{entry.entry_id}_nav_left", lambda: AndroidTVNavigationButton(coordinator, entry, "left", "Navigate Left", "mdi:arrow-left")),
-        ("button", f"{entry.entry_id}_nav_right", lambda: AndroidTVNavigationButton(coordinator, entry, "right", "Navigate Right", "mdi:arrow-right")),
-        ("button", f"{entry.entry_id}_nav_center", lambda: AndroidTVNavigationButton(coordinator, entry, "center", "Navigate Center", "mdi:checkbox-blank-circle")),
-        ("button", f"{entry.entry_id}_nav_back", lambda: AndroidTVNavigationButton(coordinator, entry, "back", "Navigate Back", "mdi:arrow-left-bold")),
-        ("button", f"{entry.entry_id}_nav_home", lambda: AndroidTVNavigationButton(coordinator, entry, "home", "Navigate Home", "mdi:home")),
-        ("button", f"{entry.entry_id}_nav_menu", lambda: AndroidTVNavigationButton(coordinator, entry, "menu", "Navigate Menu", "mdi:menu")),
-        ("button", f"{entry.entry_id}_refresh_apps", lambda: AndroidTVRefreshAppsButton(coordinator, entry)),
-        ("button", f"{entry.entry_id}_restart_isg", lambda: AndroidTVRestartISGButton(coordinator, entry)),
-        ("button", f"{entry.entry_id}_clear_isg_cache", lambda: AndroidTVClearISGCacheButton(coordinator, entry)),
-        ("button", f"{entry.entry_id}_isg_health_check", lambda: AndroidTVISGHealthCheckButton(coordinator, entry)),
-    ]
-    entities = []
-    for domain, unique_id, factory in planned:
-        existing = er.async_get_entity_id(domain, DOMAIN, unique_id)
-        if existing:
-            _LOGGER.debug("Button already exists: %s - skipping duplicate", existing)
-            continue
-        entities.append(factory())
 
-    if entities:
-        async_add_entities(entities, True)
+    entities = [
+        AndroidTVNavigationButton(coordinator, entry, "up", "Navigate Up", "mdi:arrow-up"),
+        AndroidTVNavigationButton(coordinator, entry, "down", "Navigate Down", "mdi:arrow-down"),
+        AndroidTVNavigationButton(coordinator, entry, "left", "Navigate Left", "mdi:arrow-left"),
+        AndroidTVNavigationButton(coordinator, entry, "right", "Navigate Right", "mdi:arrow-right"),
+        AndroidTVNavigationButton(coordinator, entry, "center", "Navigate Center", "mdi:checkbox-blank-circle"),
+        AndroidTVNavigationButton(coordinator, entry, "back", "Navigate Back", "mdi:arrow-left-bold"),
+        AndroidTVNavigationButton(coordinator, entry, "home", "Navigate Home", "mdi:home"),
+        AndroidTVNavigationButton(coordinator, entry, "menu", "Navigate Menu", "mdi:menu"),
+        AndroidTVRefreshAppsButton(coordinator, entry),
+        AndroidTVRestartISGButton(coordinator, entry),
+        AndroidTVClearISGCacheButton(coordinator, entry),
+        AndroidTVISGHealthCheckButton(coordinator, entry),
+    ]
+
+    async_add_entities(entities, True)
 
 
 class AndroidTVBaseButton(CoordinatorEntity[AndroidTVUpdateCoordinator], ButtonEntity):

@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import re
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 from homeassistant.components.media_player import (
@@ -14,7 +15,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.helpers.entity_registry import async_get as er_async_get
+import homeassistant.util.dt as dt_util
 
 from .const import (
     CONF_APPS,
@@ -41,13 +42,6 @@ async def async_setup_entry(
     """Set up the Android TV Box media player."""
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator = data["coordinator"]
-    # Deduplicate: skip if entity with same unique_id already exists
-    er = er_async_get(hass)
-    unique_id = f"{entry.entry_id}_media_player"
-    existing = er.async_get_entity_id("media_player", DOMAIN, unique_id)
-    if existing:
-        _LOGGER.debug("Media player already exists: %s - skipping duplicate", existing)
-        return
 
     async_add_entities([AndroidTVMediaPlayer(coordinator, entry)], True)
 
@@ -69,6 +63,8 @@ class AndroidTVMediaPlayer(CoordinatorEntity[AndroidTVUpdateCoordinator], MediaP
         | MediaPlayerEntityFeature.TURN_OFF
         | MediaPlayerEntityFeature.PLAY_MEDIA
         | MediaPlayerEntityFeature.BROWSE_MEDIA
+        | MediaPlayerEntityFeature.SEEK  # Enable progress bar dragging
+        | MediaPlayerEntityFeature.SELECT_SOURCE  # Enable app selection
     )
     
     def __init__(self, coordinator: AndroidTVUpdateCoordinator, entry: ConfigEntry) -> None:
@@ -136,10 +132,35 @@ class AndroidTVMediaPlayer(CoordinatorEntity[AndroidTVUpdateCoordinator], MediaP
     @property
     def media_title(self) -> Optional[str]:
         """Title of current playing media."""
+        # Try to get media title from coordinator data
+        if hasattr(self.coordinator.data, 'media_title') and self.coordinator.data.media_title:
+            return self.coordinator.data.media_title
+        # Fallback to app name
         if self.coordinator.data.current_app_name:
             return f"Playing on {self.coordinator.data.current_app_name}"
         return None
-    
+
+    @property
+    def media_duration(self) -> Optional[int]:
+        """Duration of current playing media in seconds."""
+        if hasattr(self.coordinator.data, 'media_duration'):
+            return self.coordinator.data.media_duration
+        return None
+
+    @property
+    def media_position(self) -> Optional[int]:
+        """Position of current playing media in seconds."""
+        if hasattr(self.coordinator.data, 'media_position'):
+            return self.coordinator.data.media_position
+        return None
+
+    @property
+    def media_position_updated_at(self) -> Optional[datetime]:
+        """When was the position of the current playing media valid."""
+        if hasattr(self.coordinator.data, 'media_position_updated_at'):
+            return self.coordinator.data.media_position_updated_at
+        return None
+
     @property
     def app_name(self) -> Optional[str]:
         """Name of the current running app."""
@@ -224,7 +245,10 @@ class AndroidTVMediaPlayer(CoordinatorEntity[AndroidTVUpdateCoordinator], MediaP
     async def async_set_volume_level(self, volume: float) -> None:
         """Set volume level, range 0..1."""
         success = await self.coordinator.set_volume_with_feedback(volume)
-        if not success:
+        if success:
+            # Immediately update HA UI state
+            self.async_write_ha_state()
+        else:
             _LOGGER.error("Failed to set volume to %s", volume)
     
     async def async_volume_up(self) -> None:
@@ -253,7 +277,46 @@ class AndroidTVMediaPlayer(CoordinatorEntity[AndroidTVUpdateCoordinator], MediaP
             current, max_vol, is_muted = await self.coordinator.adb_manager.get_volume_state()
             self.coordinator.data.update_volume_state(current, max_vol, is_muted)
             self.async_write_ha_state()
-    
+
+    async def async_media_seek(self, position: float) -> None:
+        """Seek to position in seconds."""
+        # Android TV doesn't have a direct seek command via ADB
+        # We simulate it by:
+        # 1. Fast forward/rewind to approximate position
+        # 2. Or send key events for seek bar manipulation (if supported by app)
+
+        if not self.media_position or not self.media_duration:
+            _LOGGER.warning("Cannot seek: media position/duration not available")
+            return
+
+        current_pos = self.media_position
+        target_pos = int(position)
+        diff = target_pos - current_pos
+
+        if abs(diff) < 5:
+            # Small difference, ignore
+            return
+
+        # For now, we log that seek was requested
+        # In the future, this could be implemented using:
+        # - DPAD_LEFT/RIGHT for small seeks
+        # - Multiple fast forward/rewind key events
+        # - App-specific intents if available
+        _LOGGER.info(
+            "Seek requested from %ds to %ds (diff: %ds). "
+            "Note: Precise seeking via ADB is limited.",
+            current_pos, target_pos, diff
+        )
+
+        # Optionally: Send appropriate number of seek forward/backward commands
+        # This is a simplified implementation
+        if diff > 0:
+            # Seek forward - send MEDIA_FAST_FORWARD
+            await self.coordinator.adb_manager.execute_command("input keyevent 90")  # KEYCODE_MEDIA_FAST_FORWARD
+        else:
+            # Seek backward - send MEDIA_REWIND
+            await self.coordinator.adb_manager.execute_command("input keyevent 89")  # KEYCODE_MEDIA_REWIND
+
     async def async_select_source(self, source: str) -> None:
         """Select input source (app)."""
         package_name = self._configured_apps.get(source)

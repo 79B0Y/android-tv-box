@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime
+from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
@@ -43,6 +44,8 @@ from .const import (
     MEDIA_STATE_PAUSED,
     MEDIA_STATE_PLAYING,
     SET_COMMANDS,
+    CAST_INTENTS,
+    CAST_EXPECTED_PACKAGES,
     STATE_COMMANDS,
 )
 
@@ -53,7 +56,8 @@ VOLUME_PATTERN = re.compile(r"volume is (\d+) in range \[(\d+)\.\.(\d+)\]")
 SSID_PATTERN = re.compile(r'SSID:\s*"([^"]+)"')
 IP_PATTERN = re.compile(r'inet (\d+\.\d+\.\d+\.\d+)')
 CPU_PATTERN = re.compile(r'(\d+\.?\d*)%')
-ACTIVITY_PATTERN = re.compile(r'ACTIVITY ([^\s]+)')
+# Match topResumedActivity format: topResumedActivity=ActivityRecord{... u0 com.package/activity ...}
+ACTIVITY_PATTERN = re.compile(r'topResumedActivity=ActivityRecord\{[^\}]+\s+u\d+\s+([^\s]+)\s')
 MEMORY_TOTAL_PATTERN = re.compile(r'TOTAL.*?(\d+)')
 
 
@@ -170,6 +174,7 @@ class ADBManager(ADBManagerInterface):
         self._device: Optional[AdbDeviceTcp] = None
         self._connected = False
         self._command_semaphore = asyncio.Semaphore(MAX_CONCURRENT_COMMANDS)
+        self._screenshot_lock = asyncio.Lock()  # Prevent concurrent screenshot requests
         self._cache = CommandCache()
         self._logger = _LOGGER.getChild(f"{host}_{port}")
         
@@ -363,7 +368,12 @@ class ADBManager(ADBManagerInterface):
     # Media control methods
     async def media_play(self) -> bool:
         """Send play command."""
-        result = await self.execute_command(ADB_COMMANDS["media_play"], use_cache=False)
+        # If media session is BUFFERING or PAUSED, send PLAY; otherwise toggle PLAY_PAUSE as fallback
+        pre = await self.execute_command(STATE_COMMANDS["media_state"], use_cache=False)
+        pre_state = pre.stdout if (pre.success and pre.stdout) else ""
+        prefer_play = ("PAUSED" in pre_state) or ("BUFFERING" in pre_state) or ("STOPPED" in pre_state)
+        cmd = ADB_COMMANDS["media_play"] if prefer_play else ADB_COMMANDS["media_play_pause"]
+        result = await self.execute_command(cmd, use_cache=False)
         return result.success
     
     async def media_pause(self) -> bool:
@@ -392,16 +402,30 @@ class ADBManager(ADBManagerInterface):
         return result.success
     
     async def get_media_state(self) -> str:
-        """Get current media playback state."""
-        result = await self.execute_command(STATE_COMMANDS["media_state"])
-        if result.success and result.stdout:
-            state = result.stdout.strip().upper()
-            if "PLAYING" in state:
-                return MEDIA_STATE_PLAYING
-            elif "PAUSED" in state:
-                return MEDIA_STATE_PAUSED
-            elif "STOPPED" in state:
-                return MEDIA_STATE_IDLE
+        """Get current media playback state.
+
+        Parse dumpsys media_session output to find the active session's PlaybackState.
+        Avoid shell-side awk/grep to maximize compatibility.
+        """
+        result = await self.execute_command(STATE_COMMANDS["media_state"], use_cache=False)
+        if not (result.success and result.stdout):
+            return MEDIA_STATE_IDLE
+
+        text = result.stdout
+        # Prefer the first occurrence of PlaybackState with 'state='<STATE>
+        # Example: state=PlaybackState {state=PLAYING(3), ...}
+        try:
+            match = re.search(r"state=PlaybackState\s*\{?state=([A-Z_]+)\(", text)
+            if match:
+                st = match.group(1)
+                if st == "PLAYING":
+                    return MEDIA_STATE_PLAYING
+                if st in ("PAUSED", "PAUSE"):
+                    return MEDIA_STATE_PAUSED
+                if st in ("STOPPED", "STOP"):
+                    return MEDIA_STATE_IDLE
+        except Exception:
+            pass
         return MEDIA_STATE_IDLE
     
     # Volume control methods
@@ -427,18 +451,41 @@ class ADBManager(ADBManagerInterface):
         return result.success
     
     async def get_volume_state(self) -> Tuple[int, int, bool]:
-        """Get volume state (current, max, is_muted)."""
-        result = await self.execute_command(STATE_COMMANDS["volume_level"])
+        """Get volume state (current, max, is_muted) with accurate mute detection."""
+        # 1) Exact volume level
+        result = await self.execute_command(STATE_COMMANDS["volume_level"], use_cache=False)
+        current = 0
+        max_vol = 15
         if result.success and result.stdout:
-            # Parse: "volume is 8 in range [0..15]"
-            match = VOLUME_PATTERN.search(result.stdout)
-            if match:
-                current = int(match.group(1))
-                min_vol = int(match.group(2))
-                max_vol = int(match.group(3))
-                is_muted = current == min_vol
-                return current, max_vol, is_muted
-        return 0, 15, False
+            m = VOLUME_PATTERN.search(result.stdout)
+            if m:
+                current = int(m.group(1))
+                min_vol = int(m.group(2))
+                max_vol = int(m.group(3))
+        
+        # 2) Accurate mute via dumpsys audio STREAM_MUSIC section
+        muted = False
+        audio = await self.execute_command(STATE_COMMANDS["audio_info"], use_cache=False)
+        if audio.success and audio.stdout:
+            try:
+                # Narrow to STREAM_MUSIC block then search Muted: true/false
+                # Split by lines; scan when encountering '- STREAM_MUSIC' header
+                lines = audio.stdout.splitlines()
+                in_music = False
+                for line in lines:
+                    if "- STREAM_MUSIC" in line:
+                        in_music = True
+                        continue
+                    if in_music and line.startswith('- '):
+                        # Reached next stream block
+                        break
+                    if in_music and 'Muted:' in line:
+                        muted = 'true' in line.lower()
+                        break
+            except Exception:
+                pass
+        
+        return current, max_vol, muted
     
     # Power control methods
     async def power_on(self) -> bool:
@@ -594,84 +641,181 @@ class ADBManager(ADBManagerInterface):
         return result.success
     
     async def get_screenshot_data(self, path: str) -> Optional[bytes]:
-        """Get screenshot data from device."""
-        # First take screenshot
-        if not await self.take_screenshot(path):
-            return None
-        
-        # For now, return None as screenshot transfer via base64 is complex
-        # In a real implementation, you might want to use a different approach
-        # such as using adb pull functionality or setting up a file server
-        self._logger.debug("Screenshot taken at %s but data transfer not implemented", path)
-        return None
+        """Get screenshot data from device.
+
+        This method:
+        1. Takes a screenshot and saves it to /sdcard/isgbackup/screenshot/latest.png
+        2. Reads the file using adb pull
+        3. Uses a lock to prevent concurrent screenshot requests from interfering
+
+        Note: This method uses a lock to ensure only one screenshot operation
+        happens at a time, preventing race conditions.
+        """
+        async with self._screenshot_lock:
+            try:
+                screenshot_path = "/sdcard/isgbackup/screenshot/latest.png"
+
+                # Step 1: Ensure screenshot directory exists
+                mkdir_cmd = "mkdir -p /sdcard/isgbackup/screenshot"
+                mkdir_result = await self.execute_command(mkdir_cmd, use_cache=False)
+
+                if not mkdir_result.success:
+                    self._logger.warning("Failed to create screenshot directory")
+
+                # Step 2: Take screenshot and save to device (use background execution)
+                # Note: We don't delete the old file first - screencap will overwrite it
+                # This avoids race conditions where pull happens before screencap completes
+                # screencap can take a long time and may timeout, so we run it in background
+                # and then verify the file exists
+                screencap_cmd = f"screencap {screenshot_path} &"
+                await self.execute_command(screencap_cmd, use_cache=False)
+
+                # Wait for screenshot to complete (typically takes 1-3 seconds)
+                await asyncio.sleep(2.0)
+
+                # Step 3: Verify file was created and has content (retry a few times)
+                max_retries = 3
+                screenshot_found = False
+                verify_result = None
+
+                for retry in range(max_retries):
+                    verify_cmd = f"ls -l {screenshot_path}"
+                    verify_result = await self.execute_command(verify_cmd, use_cache=False)
+
+                    if verify_result.success and verify_result.stdout.strip() != "":
+                        # Check if file has non-zero size
+                        if " 0 " not in verify_result.stdout:
+                            screenshot_found = True
+                            self._logger.debug("Screenshot file verified on retry %d", retry + 1)
+                            break
+
+                    # Wait before retry
+                    if retry < max_retries - 1:
+                        await asyncio.sleep(1.0)
+
+                if not screenshot_found:
+                    self._logger.error("Screenshot file not found or empty after %d retries", max_retries)
+                    return None
+
+                # Step 4: Use _device.pull() to read the file into BytesIO
+                bytes_buffer = BytesIO()
+                self._device.pull(screenshot_path, bytes_buffer)
+                screenshot_data = bytes_buffer.getvalue()
+
+                if screenshot_data and len(screenshot_data) > 0:
+                    # Verify it's a valid PNG file
+                    if screenshot_data[:8] == b'\x89PNG\r\n\x1a\n':
+                        self._logger.info("Screenshot captured successfully, size: %d bytes", len(screenshot_data))
+                        return screenshot_data
+                    else:
+                        self._logger.error("Screenshot file is not a valid PNG")
+                        return None
+                else:
+                    self._logger.error("Screenshot file is empty")
+                    return None
+
+            except Exception as e:
+                self._logger.error("Failed to capture screenshot: %s", e)
+                return None
     
     # Cast methods
     async def cast_media_url(self, url: str) -> bool:
-        """Cast media URL."""
+        """Cast a generic media URL using system VIEW intent."""
         command = SET_COMMANDS["cast_media"].format(url=url)
         result = await self.execute_command(command, use_cache=False)
         return result.success
-    
+
+    async def _try_intents(self, commands: list[str]) -> bool:
+        """Try a list of am start commands until one succeeds."""
+        for cmd in commands:
+            self._logger.debug("Trying cast intent: %s", cmd)
+            res = await self.execute_command(cmd, use_cache=False)
+            if res.success:
+                return True
+        return False
+
+    async def _verify_current_package(self, expected_packages: list[str]) -> bool:
+        """Verify that one of expected packages is now the foreground app."""
+        try:
+            activity = await self.get_current_activity()
+            if not activity:
+                return False
+            pkg = activity.split('/')[0]
+            return pkg in expected_packages
+        except Exception:
+            return False
+
     async def cast_youtube_video(self, video_id: str) -> bool:
-        """Cast YouTube video."""
-        command = SET_COMMANDS["cast_youtube"].format(video_id=video_id)
-        result = await self.execute_command(command, use_cache=False)
-        return result.success
-    
+        """Cast YouTube video (TV-first)."""
+        ok = await self._try_intents([c.format(video_id=video_id) for c in CAST_INTENTS["youtube"]])
+        if not ok:
+            return False
+        await asyncio.sleep(IMMEDIATE_FEEDBACK_TIMINGS["app_start"])  # give it time
+        return await self._verify_current_package(CAST_EXPECTED_PACKAGES["youtube"]) or ok
+
     async def cast_netflix_video(self, video_id: str) -> bool:
-        """Cast Netflix video."""
-        command = SET_COMMANDS["cast_netflix"].format(video_id=video_id)
-        result = await self.execute_command(command, use_cache=False)
-        return result.success
-    
+        """Cast Netflix video (TV-first)."""
+        ok = await self._try_intents([c.format(video_id=video_id) for c in CAST_INTENTS["netflix"]])
+        if not ok:
+            return False
+        await asyncio.sleep(IMMEDIATE_FEEDBACK_TIMINGS["app_start"])  # give it time
+        return await self._verify_current_package(CAST_EXPECTED_PACKAGES["netflix"]) or ok
+
     async def cast_spotify_track(self, track_id: str) -> bool:
-        """Cast Spotify track."""
-        command = SET_COMMANDS["cast_spotify"].format(track_id=track_id)
-        result = await self.execute_command(command, use_cache=False)
-        return result.success
+        """Cast Spotify track (TV-first)."""
+        ok = await self._try_intents([c.format(track_id=track_id) for c in CAST_INTENTS["spotify"]])
+        if not ok:
+            return False
+        await asyncio.sleep(IMMEDIATE_FEEDBACK_TIMINGS["app_start"])  # give it time
+        return await self._verify_current_package(CAST_EXPECTED_PACKAGES["spotify"]) or ok
     
     # ISG monitoring methods (backward compatibility - delegate to ISGMonitor)
     async def check_isg_process_status(self) -> bool:
-        """Check if ISG process is running.
-        
-        Note: This method is kept for backward compatibility.
-        Consider using ISGMonitor directly for new code.
-        """
-        result = await self.execute_command(ISG_COMMANDS["process_status"])
-        return result.success and ISG_PACKAGE_NAME in result.stdout
+        """Check if ISG process is running using pidof."""
+        result = await self.execute_command(ISG_COMMANDS["process_status"], use_cache=False)
+        if result.success and result.stdout:
+            pid = result.stdout.strip()
+            return pid.isdigit()
+        return False
     
     async def get_isg_memory_usage(self) -> Tuple[Optional[float], Optional[float]]:
-        """Get ISG memory usage (MB, percentage).
-        
-        Note: This method is kept for backward compatibility.
-        Consider using ISGMonitor directly for new code.
-        """
-        result = await self.execute_command(ISG_COMMANDS["memory_usage"])
-        if result.success and result.stdout:
-            # Parse memory info
-            for line in result.stdout.split('\n'):
-                if 'TOTAL' in line:
-                    match = MEMORY_TOTAL_PATTERN.search(line)
-                    if match:
-                        memory_kb = int(match.group(1))
-                        memory_mb = memory_kb / 1024
-                        # Rough percentage calculation (assuming 1GB total memory)
-                        memory_pct = (memory_mb / 1024) * 100
-                        return memory_mb, memory_pct
-        return None, None
+        """Get ISG memory usage (MB, percentage) from dumpsys meminfo."""
+        result = await self.execute_command(ISG_COMMANDS["memory_usage"], use_cache=False)
+        if not (result.success and result.stdout):
+            return None, None
+        mem_mb = None
+        total_pct = None
+        for line in result.stdout.split('\n'):
+            # Typical line: TOTAL  123456   7890   ... (kB)
+            if 'TOTAL' in line:
+                m = MEMORY_TOTAL_PATTERN.search(line)
+                if m:
+                    mem_kb = int(m.group(1))
+                    mem_mb = mem_kb / 1024.0
+                    break
+        # Percentage unknown without system total; leave None
+        return mem_mb, total_pct
     
     async def get_isg_cpu_usage(self) -> Optional[float]:
-        """Get ISG CPU usage percentage.
-        
-        Note: This method is kept for backward compatibility.
-        Consider using ISGMonitor directly for new code.
-        """
-        result = await self.execute_command(ISG_COMMANDS["cpu_usage"])
-        if result.success and result.stdout:
-            # Parse top output for CPU usage
-            match = CPU_PATTERN.search(result.stdout)
-            if match:
-                return float(match.group(1))
+        """Get ISG CPU usage percentage from top for specific PID."""
+        result = await self.execute_command(ISG_COMMANDS["cpu_usage"], use_cache=False)
+        if not (result.success and result.stdout):
+            return None
+        text = result.stdout
+        if 'NO_PID' in text:
+            return None
+        # Find a line containing the package and capture CPU column
+        for line in text.strip().split('\n'):
+            if 'com.linknlink.app.device.isg' in line:
+                parts = line.split()
+                # Heuristic: after state letter comes %CPU then %MEM
+                for i, tok in enumerate(parts):
+                    if tok in ('S','R','D','T','Z') and i + 2 < len(parts):
+                        try:
+                            cpu = float(parts[i+1])
+                            return cpu
+                        except Exception:
+                            continue
         return None
     
     async def force_start_isg(self) -> bool:

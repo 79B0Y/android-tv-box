@@ -167,12 +167,29 @@ class AndroidTVState:
     
     def update_isg_health(self, health_data: Dict[str, Any]) -> None:
         """Update ISG health status."""
-        self.isg_running = health_data.get("is_running", False)
+        is_running_now = health_data.get("is_running", False)
+
+        # If ISG just started running, record the start time
+        if is_running_now and not self.isg_running:
+            self.isg_last_start_time = datetime.now()
+            _LOGGER.info("ISG application started at %s", self.isg_last_start_time)
+
+        # If ISG just stopped, reset uptime
+        if not is_running_now and self.isg_running:
+            self.isg_uptime_minutes = 0
+            _LOGGER.info("ISG application stopped")
+
+        self.isg_running = is_running_now
         self.isg_memory_usage_mb = health_data.get("memory_usage", 0.0)
         self.isg_cpu_usage = health_data.get("cpu_usage", 0.0)
         self.isg_health_status = health_data.get("health_status", ISG_HEALTH_UNKNOWN)
         self.isg_last_health_check = health_data.get("last_check")
-        
+
+        # Calculate uptime if running and start time is known
+        if self.isg_running and self.isg_last_start_time:
+            uptime_delta = datetime.now() - self.isg_last_start_time
+            self.isg_uptime_minutes = int(uptime_delta.total_seconds() / 60)
+
         if health_data.get("crash_detected"):
             self.isg_crash_count += 1
             self.isg_last_crash_time = datetime.now()
@@ -240,13 +257,15 @@ class AndroidTVUpdateCoordinator(DataUpdateCoordinator):
             self.data.is_connected = True
             self.data.last_seen = current_time
             self.data.connection_error = None
-            
-            # Smart monitoring - skip detailed checks if needed
-            if self._smart_monitoring and self._should_skip_detailed_check():
-                return self.data
-            
-            # Layered update strategy
+
+            # Always update basic status (power, media, volume) - critical for responsiveness
             await self._update_basic_status(current_time)
+
+            # Smart monitoring - skip only detailed/low-frequency checks if needed
+            skip_detailed = self._smart_monitoring and self._should_skip_detailed_check()
+            if skip_detailed:
+                _LOGGER.debug("Skipping detailed checks - device was recently offline")
+                return self.data
             
             if self._should_update_high_frequency(current_time):
                 _LOGGER.debug("Triggering high-frequency update")
@@ -368,13 +387,27 @@ class AndroidTVUpdateCoordinator(DataUpdateCoordinator):
                 for line in cpu_result.stdout.split('\n'):
                     if '%cpu' in line.lower():
                         _LOGGER.debug("Found CPU line: %s", line[:80])
-                        # Extract total cpu percentage (before "cpu" keyword)
-                        match = re.search(r'(\d+)%cpu', line)
-                        if match:
-                            total_cpu = int(match.group(1))
-                            # Convert from total (e.g., 400% on 4 cores) to average %
-                            self.data.cpu_usage = float(total_cpu) / 4.0  # Assuming 4 cores, adjust if needed
-                            _LOGGER.debug("CPU usage set to: %.1f%%", self.data.cpu_usage)
+                        # Extract idle percentage and calculate usage
+                        # Example: "400%cpu 171%user ... 125%idle ..."
+                        idle_match = re.search(r'(\d+)%idle', line)
+                        cpu_match = re.search(r'(\d+)%cpu', line)
+
+                        if idle_match and cpu_match:
+                            idle_pct = int(idle_match.group(1))
+                            total_cpu = int(cpu_match.group(1))
+
+                            # Calculate number of cores from total CPU percentage
+                            # e.g., 400%cpu = 4 cores, 800%cpu = 8 cores
+                            cores = total_cpu / 100
+
+                            # Calculate average usage per core
+                            # idle_pct is total across all cores, divide by cores to get per-core idle
+                            avg_idle = idle_pct / cores if cores > 0 else 0
+                            cpu_usage = 100.0 - avg_idle
+
+                            self.data.cpu_usage = max(0.0, min(100.0, cpu_usage))  # Clamp to 0-100%
+                            _LOGGER.debug("CPU: %d cores, %d%% idle total, %.1f%% avg idle per core, %.1f%% usage",
+                                        int(cores), idle_pct, avg_idle, self.data.cpu_usage)
                             break
                 else:
                     _LOGGER.debug("No CPU line found in output")
@@ -436,8 +469,26 @@ class AndroidTVUpdateCoordinator(DataUpdateCoordinator):
         """Update ISG application status."""
         try:
             # Perform health check
-            health_data = await self.adb_manager.perform_isg_health_check()
-            self.data.update_isg_health(health_data)
+            # Use granular reads to reduce errors
+            is_running = await self.adb_manager.check_isg_process_status()
+            self.data.isg_running = is_running
+
+            if is_running:
+                mem_mb, mem_pct = await self.adb_manager.get_isg_memory_usage()
+                if mem_mb is not None:
+                    self.data.isg_memory_usage_mb = mem_mb
+                cpu_pct = await self.adb_manager.get_isg_cpu_usage()
+                if cpu_pct is not None:
+                    self.data.isg_cpu_usage = cpu_pct
+                # Health: basic heuristic
+                if cpu_pct and cpu_pct > self._isg_cpu_threshold:
+                    self.data.isg_health_status = "unhealthy"
+                else:
+                    self.data.isg_health_status = ISG_HEALTH_HEALTHY
+            else:
+                self.data.isg_health_status = ISG_HEALTH_NOT_RUNNING
+
+            self.data.isg_last_health_check = current_time
             
             # Auto-restart logic
             if self._isg_auto_restart_enabled and self._should_restart_isg():
@@ -577,19 +628,21 @@ class AndroidTVUpdateCoordinator(DataUpdateCoordinator):
         try:
             if turn_on:
                 success = await self.adb_manager.power_on()
+                wait_time = 1.0  # Power on is quick
             else:
                 success = await self.adb_manager.power_off()
-            
+                wait_time = 2.0  # Power off needs more time to complete
+
             if success:
-                await asyncio.sleep(1.0)
-                
+                await asyncio.sleep(wait_time)
+
                 # Query power state
                 wakefulness, screen_on = await self.adb_manager.get_power_state()
                 self.data.update_power_state(wakefulness, screen_on)
                 self.async_update_listeners()
-            
+
             return success
-            
+
         except Exception as e:
             _LOGGER.error("Error controlling power: %s", e)
             return False
@@ -650,27 +703,31 @@ class AndroidTVUpdateCoordinator(DataUpdateCoordinator):
             return False
     
     async def take_screenshot_with_feedback(self) -> bool:
-        """Take screenshot with immediate data retrieval."""
+        """Take screenshot with immediate data retrieval.
+
+        This method uses the new screenshot implementation that:
+        1. Saves screenshot to /sdcard/isgbackup/screenshot/latest.png
+        2. Pulls the file using adb pull
+        3. Returns the image data
+        """
         try:
             timestamp = datetime.now()
-            filename = f"screenshot_{timestamp.strftime('%Y%m%d_%H%M%S')}.png"
-            device_path = f"{self.data.screenshot_path}{filename}"
-            
-            # Take screenshot
-            success = await self.adb_manager.take_screenshot(device_path)
-            
-            if success:
-                # Get screenshot data
-                screenshot_data = await self.adb_manager.get_screenshot_data(device_path)
-                
-                if screenshot_data:
-                    self.data.screenshot_data = screenshot_data
-                    self.data.screenshot_timestamp = timestamp
-                    self.async_update_listeners()
-                    return True
-            
-            return False
-            
+
+            # Get screenshot data (this handles screenshot capture + pull)
+            # The path parameter is ignored by the new implementation
+            screenshot_data = await self.adb_manager.get_screenshot_data("")
+
+            if screenshot_data:
+                self.data.screenshot_data = screenshot_data
+                self.data.screenshot_timestamp = timestamp
+                self.data.screenshot_path = "/sdcard/isgbackup/screenshot/latest.png"
+                self.async_update_listeners()
+                _LOGGER.info("Screenshot captured and updated, size: %d bytes", len(screenshot_data))
+                return True
+            else:
+                _LOGGER.error("Failed to get screenshot data")
+                return False
+
         except Exception as e:
             _LOGGER.error("Error taking screenshot: %s", e)
             return False

@@ -12,7 +12,6 @@ from homeassistant.const import PERCENTAGE, UnitOfInformation
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.helpers.entity_registry import async_get as er_async_get
 
 from .const import DOMAIN, ISG_HEALTH_HEALTHY, ISG_HEALTH_NOT_RUNNING
 from .coordinator import AndroidTVUpdateCoordinator
@@ -28,31 +27,20 @@ async def async_setup_entry(
     """Set up Android TV Box sensors."""
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator = data["coordinator"]
-    
-    # Deduplicate per unique_id
-    er = er_async_get(hass)
-    planned = [
-        ("sensor", f"{entry.entry_id}_brightness", AndroidTVBrightnessSensor),
-        ("sensor", f"{entry.entry_id}_network", AndroidTVNetworkSensor),
-        ("sensor", f"{entry.entry_id}_current_app", AndroidTVAppSensor),
-        ("sensor", f"{entry.entry_id}_cpu", AndroidTVCPUSensor),
-        ("sensor", f"{entry.entry_id}_memory_usage", AndroidTVMemorySensor),
-        ("sensor", f"{entry.entry_id}_isg_status", AndroidTVISGStatusSensor),
-        ("sensor", f"{entry.entry_id}_isg_memory", AndroidTVISGMemorySensor),
-        ("sensor", f"{entry.entry_id}_isg_cpu", AndroidTVISGCPUSensor),
-        ("sensor", f"{entry.entry_id}_isg_uptime", AndroidTVISGUptimeSensor),
-        ("sensor", f"{entry.entry_id}_isg_crash_count", AndroidTVISGCrashCountSensor),
-    ]
-    entities = []
-    for domain, unique_id, cls in planned:
-        existing = er.async_get_entity_id(domain, DOMAIN, unique_id)
-        if existing:
-            _LOGGER.debug("Sensor already exists: %s - skipping duplicate", existing)
-            continue
-        entities.append(cls(coordinator, entry))
 
-    if entities:
-        async_add_entities(entities, True)
+    entities = [
+        AndroidTVBrightnessSensor(coordinator, entry),
+        AndroidTVNetworkSensor(coordinator, entry),
+        AndroidTVAppSensor(coordinator, entry),
+        AndroidTVCPUSensor(coordinator, entry),
+        AndroidTVMemorySensor(coordinator, entry),
+        AndroidTVISGStatusSensor(coordinator, entry),
+        AndroidTVISGMemorySensor(coordinator, entry),
+        AndroidTVISGUptimeSensor(coordinator, entry),
+        AndroidTVISGCrashCountSensor(coordinator, entry),
+    ]
+
+    async_add_entities(entities, True)
 
 
 class AndroidTVBaseSensor(CoordinatorEntity[AndroidTVUpdateCoordinator], SensorEntity):
@@ -185,17 +173,18 @@ class AndroidTVMemorySensor(AndroidTVBaseSensor):
         self._attr_unique_id = f"{entry.entry_id}_memory_usage"
         self._attr_name = f"{entry.data.get('device_name', 'Android TV Box')} Memory Usage"
         self._attr_icon = "mdi:memory"
-        self._attr_native_unit_of_measurement = UnitOfInformation.MEGABYTES
+        self._attr_native_unit_of_measurement = UnitOfInformation.GIGABYTES
         self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_device_class = SensorDeviceClass.DATA_SIZE
+        # Avoid HA auto-converting data_size units; we want to display GB
+        self._attr_device_class = None
+        self._attr_suggested_display_precision = 2
     
     @property
     def native_value(self) -> Optional[float]:
         """Return the memory usage in MB."""
-        # Convert the memory_usage (assumed to be in percentage) to MB if we have total memory info
-        # For now, return the raw memory_usage as MB to maintain consistency
+        # memory_usage is tracked in MB; convert to GB for display
         if self.coordinator.data.memory_usage > 0:
-            return round(self.coordinator.data.memory_usage, 1)
+            return round(self.coordinator.data.memory_usage / 1024.0, 2)
         return None
 
 
@@ -264,22 +253,7 @@ class AndroidTVISGMemorySensor(AndroidTVBaseSensor):
         }
 
 
-class AndroidTVISGCPUSensor(AndroidTVBaseSensor):
-    """Sensor for ISG CPU usage."""
-    
-    def __init__(self, coordinator: AndroidTVUpdateCoordinator, entry: ConfigEntry) -> None:
-        """Initialize the ISG CPU sensor."""
-        super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.entry_id}_isg_cpu"
-        self._attr_name = f"{entry.data.get('device_name', 'Android TV Box')} ISG CPU"
-        self._attr_icon = "mdi:cpu-64-bit"
-        self._attr_native_unit_of_measurement = PERCENTAGE
-        self._attr_state_class = SensorStateClass.MEASUREMENT
-    
-    @property
-    def native_value(self) -> Optional[float]:
-        """Return the ISG CPU usage percentage."""
-        return round(self.coordinator.data.isg_cpu_usage, 1)
+# Removed AndroidTVISGCPUSensor per user request
 
 
 class AndroidTVISGUptimeSensor(AndroidTVBaseSensor):
